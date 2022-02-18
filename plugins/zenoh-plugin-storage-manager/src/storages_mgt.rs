@@ -111,6 +111,7 @@ pub(crate) async fn start_storage(
                         sample.unwrap()
                     };
                     // Call storage
+                    // TODO: capture the stored data as result, the key-value pair and update the log
                     if let Err(e) = storage.on_sample(sample).await {
                         warn!("Storage {} raised an error receiving a sample: {}", admin_key, e);
                     }
