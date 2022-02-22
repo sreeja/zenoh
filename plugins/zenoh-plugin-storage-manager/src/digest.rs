@@ -19,6 +19,7 @@ use std::str::FromStr;
 use std::string::ParseError;
 use std::time::{Duration, SystemTime};
 use zenoh::time::Timestamp;
+use derive_new::new;
 // use std::error::Error;
 // use std::fmt;
 
