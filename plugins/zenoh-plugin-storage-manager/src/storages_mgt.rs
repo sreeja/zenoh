@@ -11,6 +11,7 @@
 // Contributors:
 //   ZettaScale Zenoh Team, <zenoh@zettascale.tech>
 //
+use std::collections::HashMap;
 use async_std::channel::{bounded, Sender};
 use async_std::task;
 use futures::select;
@@ -24,6 +25,10 @@ use zenoh::queryable;
 use zenoh::Session;
 use zenoh_backend_traits::Query;
 use zenoh_core::Result as ZResult;
+
+#[path = "replica.rs"]
+pub mod replica;
+pub use replica::*;
 
 pub(crate) enum StorageMessage {
     Stop,
@@ -51,44 +56,46 @@ pub(crate) async fn start_storage(
             }
         };
 
-        // align with other storages, querying them on key_expr,
-        // with starttime to get historical data (in case of time-series)
-        let query_target = QueryTarget {
-            kind: queryable::STORAGE,
-            target: Target::All,
-        };
-        let mut replies = match zenoh
-            .get(&Selector::from(&key_expr).with_value_selector("?(starttime=0)"))
-            .target(query_target)
-            .consolidation(QueryConsolidation::none())
-            .await
-        {
-            Ok(replies) => replies,
-            Err(e) => {
-                error!("Error aligning storage {} : {}", admin_key, e);
-                return;
-            }
-        };
-        while let Some(reply) = replies.next().await {
-            log::trace!(
-                "Storage {} aligns data {}",
-                admin_key,
-                reply.sample.key_expr
-            );
-            // Call incoming data interceptor (if any)
-            let sample = if let Some(ref interceptor) = in_interceptor {
-                interceptor(reply.sample)
-            } else {
-                reply.sample
-            };
-            // Call storage
-            if let Err(e) = storage.on_sample(sample).await {
-                warn!(
-                    "Storage {} raised an error aligning a sample: {}",
-                    admin_key, e
-                );
-            }
-        }
+        // TODO: start replica: digest_sub, digest_pub, aligner and align_eval
+        // TODO: Key-value stores and time-series to be addressed
+        // TODO: instead of HashMap::new(), get log from the data in storage and then start the replica with it
+        // TODO: fix the name; to be read from the configuration file
+        let replica = Replica::start(zenoh.clone(), &key_expr, "name".to_string(), HashMap::new()).await;
+
+        // // align with other storages, querying them on key_expr,
+        // // with starttime to get historical data (in case of time-series)
+        // let query_target = QueryTarget {
+        //     kind: queryable::STORAGE,
+        //     target: Target::All,
+        // };
+        // let mut replies = match zenoh
+        //     .get(&Selector::from(&key_expr).with_value_selector("?(starttime=0)"))
+        //     .target(query_target)
+        //     .consolidation(QueryConsolidation::none())
+        //     .await
+        // {
+        //     Ok(replies) => replies,
+        //     Err(e) => {
+        //         error!("Error aligning storage {} : {}", admin_key, e);
+        //         return;
+        //     }
+        // };
+        // while let Some(reply) = replies.next().await {
+        //     log::trace!("Storage {} aligns data {}", admin_key, reply.data.key_expr);
+        //     // Call incoming data interceptor (if any)
+        //     let sample = if let Some(ref interceptor) = in_interceptor {
+        //         interceptor(reply.data)
+        //     } else {
+        //         reply.data
+        //     };
+        //     // Call storage
+        //     if let Err(e) = storage.on_sample(sample).await {
+        //         warn!(
+        //             "Storage {} raised an error aligning a sample: {}",
+        //             admin_key, e
+        //         );
+        //     }
+        // }
 
         // answer to queries on key_expr
         let mut storage_queryable = match zenoh.queryable(&key_expr).kind(queryable::STORAGE).await
@@ -110,10 +117,13 @@ pub(crate) async fn start_storage(
                     } else {
                         sample.unwrap()
                     };
+                    // TODO: get key and timestamp of the sample. If no timestamp, generate one
                     // Call storage
-                    // TODO: capture the stored data as result, the key-value pair and update the log
-                    if let Err(e) = storage.on_sample(sample).await {
+                    if let Err(e) = storage.on_sample(sample.clone()).await {
                         warn!("Storage {} raised an error receiving a sample: {}", admin_key, e);
+                    } else {
+                        // TODO: capture the stored data as result, the key-value pair and update the log OR just update the log with the previosuly calculated value
+                        replica.consume_sample(sample);
                     }
                 },
                 // on query on key_expr
