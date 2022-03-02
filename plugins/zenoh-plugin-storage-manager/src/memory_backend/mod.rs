@@ -139,7 +139,7 @@ impl Storage for MemoryStorage {
 
     async fn on_sample(&mut self, mut sample: Sample) -> ZResult<StorageInsertionResult> {
         trace!("on_sample for {}", sample.key_expr);
-        // TODO: this will lead to inconsistencies, with different timestamps being generated for same sample
+        // NOTE: this will lead to inconsistencies, with different timestamps being generated for same sample
         // Will be treated as different samples and LWW policy will be applied
         sample.ensure_timestamp();
         let timestamp = sample.timestamp.unwrap();
@@ -153,12 +153,11 @@ impl Storage for MemoryStorage {
                     return Ok(StorageInsertionResult::Inserted);
                 }
                 Entry::Occupied(mut o) => {
-                    let old_val = o.get();
-                    if old_val.ts() < &timestamp {
+                    if o.get().ts() < &timestamp {
                         if let Removed {
                             ts: _,
                             cleanup_handle,
-                        } = old_val
+                        } = o.get()
                         {
                             // cancel timed cleanup
                             cleanup_handle.clone().defuse();
