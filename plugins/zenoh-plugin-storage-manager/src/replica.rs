@@ -135,10 +135,10 @@ impl Replica {
                 from,
                 sample.kind,
                 sample.key_expr.as_str(),
-                String::from_utf8_lossy(&sample.value.payload.contiguous())
+                sample.value.payload
             );
             let digest: Digest =
-                serde_json::from_str(&String::from_utf8_lossy(&sample.value.payload.contiguous()))
+                serde_json::from_str(&format!("{:?}", sample.value.payload))
                     .unwrap();
             let ts = digest.timestamp;
             let to_be_processed = self
@@ -618,11 +618,11 @@ impl Replica {
         if let Some(reply) = replies.next().await {
             debug!(
                 "[ALIGNER]>> Received ('{}': '{}')",
-                reply.data.key_expr.as_str(),
-                String::from_utf8_lossy(&reply.data.value.payload.contiguous())
+                reply.sample.key_expr.as_str(),
+                reply.sample.value.payload
             );
             reply_content =
-                String::from_utf8_lossy(&reply.data.value.payload.contiguous()).to_string();
+            format!("{:?}", reply.sample.value.payload);
         }
         reply_content
     }
