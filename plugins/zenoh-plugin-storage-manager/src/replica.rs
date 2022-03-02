@@ -14,9 +14,9 @@
 use async_std::sync::RwLock;
 use async_std::task::sleep;
 use flume::{Receiver, Sender};
-use futures::join;
+// use futures::join;
 use futures::prelude::*;
-use std::array::IntoIter;
+// use std::array::IntoIter;
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::fs;
@@ -31,7 +31,8 @@ use zenoh::queryable::EVAL;
 use zenoh::time::Timestamp;
 use zenoh::Session;
 use async_std::sync::Arc;
-use log::{debug, error, trace, warn, info};
+use log::{debug, info};
+// use log::{debug, error, trace, warn, info};
 
 #[path = "digest.rs"]
 pub mod digest;
@@ -42,7 +43,7 @@ const OVERWRITTEN_DATA: &str = "IRRELEVANT";
 const PUBLICATION_INTERVAL: Duration = Duration::from_secs(5);
 
 pub struct Replica {
-    name: String,                                          // name of replica
+    name: String,                                          // name of replica  -- to be replaced by UUID(zenoh)/<storage_type>/<storage_name>
     session: Arc<Session>,                               // zenoh session used by the replica
     key_expr: String, // key expression of the storage to be functioning as a replica
     stable_log: RwLock<HashMap<String, Timestamp>>, // log entries until the snapshot time
@@ -51,16 +52,19 @@ pub struct Replica {
     digests_published: RwLock<HashSet<u64>>, // checksum of all digests generated and published by this replica
     digests_processed: RwLock<HashSet<u64>>, // checksum of all digests received by the replica
     last_snapshot_time: RwLock<Timestamp>, // the latest snapshot time
-    last_interval: RwLock<u64>,
+    last_interval: RwLock<u64>, // the latest interval
     digest: RwLock<Option<Digest>>, // the current stable digest
 }
 
 // functions to start services required by a replica
 impl Replica {
-    pub async fn start(session: Arc<Session>, key_expr: &str, name: String, log: HashMap<String, Timestamp>) -> Replica {
+    pub async fn initialize_replica(session: Arc<Session>, key_expr: &str, name: String, log: HashMap<String, Timestamp>) -> Replica {
         info!("[REPLICA]Openning session...");
 
         let (interval, time) = Replica::get_latest_snapshot_interval_time();
+
+        let key_expr = if key_expr.ends_with("**") { key_expr.strip_suffix("**").unwrap() } 
+                        else { key_expr };
 
         let replica = Replica {
             name: name.clone(),
@@ -79,37 +83,47 @@ impl Replica {
         replica.initialize_log(log).await;
         replica.initialize_digest().await;
 
-        // channel to queue digests to be aligned
-        let (tx, rx) = flume::unbounded();
-        // digest sub
-        let digest_sub = replica.start_digest_sub(tx);
-        // eval for align
-        let align_eval = replica.start_align_eval();
-        // aligner
-        let aligner = replica.start_aligner(rx);
-        sleep(Duration::from_secs(2)).await;
-        // digest pub
-        let digest_pub = replica.start_digest_pub();
-
-        //updating snapshot time
-        let snapshot_task = replica.update_snapshot_task();
-
-        join!(
-            digest_sub,
-            align_eval,
-            aligner,
-            digest_pub,
-            snapshot_task
-        );
-
         replica
     }
 
-    pub fn consume_sample(&self, sample: Sample) {
-        todo!("implementation pending")
+
+    // pub async fn start_replica(&self) {
+    //     // channel to queue digests to be aligned
+    //     let (tx, rx) = flume::unbounded();
+    //     // digest sub
+    //     let digest_sub = self.start_digest_sub(tx);
+    //     // eval for align
+    //     let align_eval = self.start_align_eval();
+    //     // aligner
+    //     let aligner = self.start_aligner(rx);
+    //     // digest pub
+    //     let digest_pub = self.start_digest_pub();
+
+    //     //updating snapshot time
+    //     let snapshot_task = self.update_snapshot_task();
+
+    //     join!(
+    //         digest_sub,
+    //         align_eval,
+    //         aligner,
+    //         digest_pub,
+    //         snapshot_task
+    //     );
+
+    //     // TODO: this wont return until all processes are killed.. need to spawn the above methods as tasks that runs even after method closes
+    // }
+
+    pub async fn consume_sample(&self, sample: Sample) {
+        let mut sample = sample;
+        let key = sample.key_expr.as_str().to_string();
+        sample.ensure_timestamp();
+        let timestamp = sample.get_timestamp().unwrap();
+        let mut content = HashMap::new();
+        content.insert(key, *timestamp);
+        self.update_log(content).await;
     }
 
-    async fn start_digest_sub(&self, tx: Sender<(String, Digest)>) {
+    pub async fn start_digest_sub(&self, tx: Sender<(String, Digest)>) {
         let key_expr = format!("{}{}**", ALIGN_PREFIX, self.key_expr);
         let mut received = HashMap::<String, Timestamp>::new();
 
@@ -157,7 +171,7 @@ impl Replica {
         }
     }
 
-    async fn start_digest_pub(&self) {
+    pub async fn start_digest_pub(&self) {
         let key_expr = format!("{}{}{}", ALIGN_PREFIX, self.key_expr, self.name);
 
         debug!(
@@ -192,7 +206,7 @@ impl Replica {
         }
     }
 
-    async fn start_align_eval(&self) {
+    pub async fn start_align_eval(&self) {
         let key_expr = format!("{}{}{}/**", ALIGN_PREFIX, self.key_expr, self.name);
 
         debug!("[ALIGN_EVAL]Creating Queryable on '{}'...", key_expr);
@@ -219,7 +233,7 @@ impl Replica {
         }
     }
 
-    async fn start_aligner(&self, rx: Receiver<(String, Digest)>) {
+    pub async fn start_aligner(&self, rx: Receiver<(String, Digest)>) {
         while let Ok((from, incoming_digest)) = rx.recv_async().await {
             debug!(
                 "[ALIGNER]Processing digest: {:?} from {}",
@@ -235,7 +249,7 @@ impl Replica {
         }
     }
 
-    async fn update_snapshot_task(&self) {
+    pub async fn update_snapshot_task(&self) {
         sleep(Duration::from_secs(2)).await;
         loop {
             sleep(DELTA).await;

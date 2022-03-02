@@ -16,10 +16,12 @@ use async_std::channel::{bounded, Sender};
 use async_std::task;
 use futures::select;
 use futures::FutureExt;
+use futures::join;
 use log::{debug, error, trace, warn};
 use std::sync::Arc;
 use zenoh::prelude::*;
-use zenoh::query::{QueryConsolidation, QueryTarget};
+// use zenoh::query::{QueryConsolidation, QueryTarget};
+use zenoh::queryable;
 use zenoh::Session;
 use zenoh_backend_traits::Query;
 use zenoh_core::{AsyncResolve, Result as ZResult, SyncResolve};
@@ -34,7 +36,7 @@ pub(crate) enum StorageMessage {
 }
 
 pub(crate) async fn start_storage(
-    mut storage: Box<dyn zenoh_backend_traits::Storage>,
+    storage: Box<dyn zenoh_backend_traits::Storage>,
     admin_key: String,
     key_expr: String,
     in_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
@@ -43,7 +45,53 @@ pub(crate) async fn start_storage(
 ) -> ZResult<Sender<StorageMessage>> {
     debug!("Start storage {} on {}", admin_key, key_expr);
 
+    
+    // TODO: start replica: digest_sub, digest_pub, aligner and align_eval
+    // TODO: Key-value stores and time-series to be addressed
+    // TODO: instead of HashMap::new(), get log from the data in storage and then start the replica with it
+    // TODO: fix the name; to be read from the configuration file
+    let replica = Arc::new(Replica::initialize_replica(zenoh.clone(), &key_expr, "name".to_string(), HashMap::new()).await);
+    // replica.start_replica().await;
+
+    // TODO: find a better way to modularize this part
+    // channel to queue digests to be aligned
+    let (tx_digest, rx_digest) = flume::unbounded();
+    // digest sub
+    let digest_sub = replica.start_digest_sub(tx_digest);
+    // eval for align
+    let align_eval = replica.start_align_eval();
+    // aligner
+    let aligner = replica.start_aligner(rx_digest);
+    // digest pub
+    let digest_pub = replica.start_digest_pub();
+
+    //updating snapshot time
+    let snapshot_task = replica.update_snapshot_task();
+
+    let storage_task = start_storage_queryable_subscriber(storage, admin_key, key_expr, in_interceptor, out_interceptor, zenoh, replica.clone());
+
+    let result = join!(
+        digest_sub,
+        align_eval,
+        aligner,
+        digest_pub,
+        snapshot_task,
+        storage_task,
+    );
+
+    Ok(result.5)
+}
+
+async fn start_storage_queryable_subscriber(mut storage: Box<dyn zenoh_backend_traits::Storage>,
+    admin_key: String,
+    key_expr: String,
+    in_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
+    out_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
+    zenoh: Arc<Session>,
+    replica: Arc<Replica>,
+) -> Sender<StorageMessage> {
     let (tx, rx) = bounded(1);
+
     task::spawn(async move {
         // subscribe on key_expr
         let storage_sub = match zenoh.subscribe(&key_expr).res_async().await {
@@ -150,9 +198,7 @@ pub(crate) async fn start_storage(
                         Err(e) => {log::error!("Storage Message Channel Error: {}", e); return},
                     };
                 }
-            );
-        }
-    });
-
-    Ok(tx)
+            };
+        });
+    tx
 }
