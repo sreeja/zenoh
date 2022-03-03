@@ -261,7 +261,7 @@ impl Digest {
         redundant_content: HashSet<Timestamp>,
     ) -> Digest {
         // push content in correct places
-        let (current, subintervals_to_update, intervals_to_update, eras_to_update) =
+        let (current, mut subintervals_to_update, mut intervals_to_update, mut eras_to_update) =
             Digest::update_content(&mut current.clone(), content, latest_interval);
 
         // remove redundant content from proper places
@@ -272,10 +272,16 @@ impl Digest {
                 latest_interval,
             );
 
-        let subintervals_to_update = subintervals_to_update.union(&further_subintervals);
-        let intervals_to_update = intervals_to_update.union(&further_intervals);
-        let eras_to_update = eras_to_update.union(&further_eras);
+        // move intervals into eras if changed -- iterate through hot and move them to warm/cold if needed, iterate through warm and move them to cold if needed
+        let (current, realigned_eras) = Digest::recalculate_era_content(&mut current.clone(), latest_interval);
 
+        subintervals_to_update.extend(further_subintervals);
+        intervals_to_update.extend(further_intervals);
+        // let subintervals_to_update = subintervals_to_update.union(&further_subintervals);
+        // let intervals_to_update = intervals_to_update.union(&further_intervals);
+        eras_to_update.extend(further_eras);
+        eras_to_update.extend(realigned_eras);
+        
         let mut subintervals = current.subintervals.clone();
         let mut intervals = current.intervals.clone();
         let mut eras = current.eras.clone();
@@ -450,33 +456,80 @@ impl Digest {
         )
     }
 
+    fn recalculate_era_content(current: &mut Digest, latest_interval: u64) -> (Digest, HashSet<EraType>) {
+        let mut eras_to_update = HashSet::new();
+        let mut to_modify = HashSet::new();
+        for (curr_era, interval_list) in current.eras.clone() {
+            if curr_era == EraType::Hot || curr_era == EraType::Warm {
+                for interval in &interval_list.content {
+                    let new_era = Digest::get_era(latest_interval, *interval);
+                    if new_era != curr_era {
+                        to_modify.insert((*interval, curr_era.clone(), new_era.clone()));
+                        eras_to_update.insert(curr_era.clone());
+                        eras_to_update.insert(new_era);
+                    }
+                }
+            }
+        }
+        for (interval, prev_era, new_era) in to_modify {
+            // move the interval from its previous era to the new
+            if current.eras.contains_key(&prev_era) {
+                current.eras.get_mut(&prev_era).unwrap().content.dedup();
+                current
+                    .eras
+                    .get_mut(&prev_era)
+                    .unwrap()
+                    .content
+                    .retain(|&x| x != interval);
+            }
+            if current.eras.contains_key(&new_era) {
+                current.eras.get_mut(&new_era).unwrap().content.push(interval);
+            } else {
+                current.eras.insert(
+                    new_era,
+                    Interval {
+                        checksum: 0,
+                        content: vec![interval],
+                    },
+                );
+            }
+        }
+        
+        (
+            current.clone(),
+            eras_to_update,
+        )
+    }
+
     fn get_bucket(latest_interval: u64, ts: Timestamp) -> (EraType, u64, u64) {
+        let ts = u64::try_from(
+            ts.get_time()
+            .to_system_time()
+            .duration_since(EPOCH_START)
+            .unwrap()
+            .as_millis(),
+        )
+        .unwrap();
+        let delta = u64::try_from(DELTA.as_millis()).unwrap();
+        
+        let interval = ts / delta;
+        let subinterval = ts / (delta / u64::try_from(SUB_INTERVALS).unwrap());
+        let era = Digest::get_era(latest_interval, interval);
+        (era, interval, subinterval)
+    }
+
+    fn get_era(latest_interval: u64, interval: u64) -> EraType {
         let hot_min = latest_interval - u64::try_from(HOT).unwrap() + 1;
         let warm_min =
             latest_interval - u64::try_from(HOT).unwrap() - u64::try_from(WARM).unwrap() + 1;
 
-        let ts = u64::try_from(
-            ts.get_time()
-                .to_system_time()
-                .duration_since(EPOCH_START)
-                .unwrap()
-                .as_millis(),
-        )
-        .unwrap();
-        let delta = u64::try_from(DELTA.as_millis()).unwrap();
-
-        let interval = ts / delta;
-        let subinterval = ts / (delta / u64::try_from(SUB_INTERVALS).unwrap());
-
-        let era = if interval >= hot_min {
+        if interval >= hot_min {
             EraType::Hot
         } else if interval >= warm_min {
             EraType::Warm
         } else {
             EraType::Cold
-        };
-
-        (era, interval, subinterval)
+        }
     }
 
     fn process_log(
