@@ -13,7 +13,8 @@
 //
 #![recursion_limit = "512"]
 
-use async_std::channel::Sender;
+use flume::Sender;
+// use async_std::sync::Arc;
 use async_std::task;
 use libloading::Library;
 use memory_backend::create_memory_backend;
@@ -134,7 +135,7 @@ impl StorageRuntimeInner {
             async_std::task::block_on(futures::future::join_all(
                 storages
                     .into_iter()
-                    .map(|(_, s)| async move { s.send(StorageMessage::Stop).await }),
+                    .map(|(_, s)| async move { s.send(StorageMessage::Stop) }),
             ));
         }
         std::mem::drop(self.volumes.remove(&volume.name));
@@ -230,7 +231,8 @@ impl StorageRuntimeInner {
         if let Some(storages) = self.storages.get_mut(volume) {
             if let Some(storage) = storages.get_mut(&config.name) {
                 log::debug!("Closing storage {} from volume {}", config.name, volume);
-                let _ = async_std::task::block_on(storage.send(StorageMessage::Stop));
+                // let _ = async_std::task::block_on(storage.send(StorageMessage::Stop));
+                let _ = storage.send(StorageMessage::Stop);
             }
         }
     }
@@ -348,7 +350,7 @@ impl RunningPluginTrait for StorageRuntime {
                         if zenoh::utils::key_expr::intersect(key, key_selector) {
                             if let Ok(value) = task::block_on(async {
                                 let (tx, rx) = async_std::channel::bounded(1);
-                                let _ = handle.send(StorageMessage::GetStatus(tx)).await;
+                                let _ = handle.send(StorageMessage::GetStatus(tx));
                                 rx.recv().await
                             }) {
                                 responses.push(zenoh::plugins::Response {
