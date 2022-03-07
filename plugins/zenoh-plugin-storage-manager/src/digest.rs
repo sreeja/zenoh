@@ -12,6 +12,7 @@
 //   ADLINK zenoh team, <zenoh@adlink-labs.tech>
 //
 use crc::{Crc, CRC_64_ECMA_182};
+use derive_new::new;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
@@ -19,7 +20,6 @@ use std::str::FromStr;
 use std::string::ParseError;
 use std::time::{Duration, SystemTime};
 use zenoh::time::Timestamp;
-use derive_new::new;
 // use std::error::Error;
 // use std::fmt;
 
@@ -164,7 +164,7 @@ impl Digest {
         }
     }
 
-    fn get_content_hash<T:Checksum>(content: &Vec<T>) -> u64 {
+    fn get_content_hash<T: Checksum>(content: &Vec<T>) -> u64 {
         let crc64 = Crc::<u64>::new(&CRC_64_ECMA_182);
         let mut hasher = crc64.digest();
         for s_cont in content {
@@ -273,7 +273,8 @@ impl Digest {
             );
 
         // move intervals into eras if changed -- iterate through hot and move them to warm/cold if needed, iterate through warm and move them to cold if needed
-        let (current, realigned_eras) = Digest::recalculate_era_content(&mut current.clone(), latest_interval);
+        let (current, realigned_eras) =
+            Digest::recalculate_era_content(&mut current.clone(), latest_interval);
 
         subintervals_to_update.extend(further_subintervals);
         intervals_to_update.extend(further_intervals);
@@ -281,7 +282,7 @@ impl Digest {
         // let intervals_to_update = intervals_to_update.union(&further_intervals);
         eras_to_update.extend(further_eras);
         eras_to_update.extend(realigned_eras);
-        
+
         let mut subintervals = current.subintervals.clone();
         let mut intervals = current.intervals.clone();
         let mut eras = current.eras.clone();
@@ -311,8 +312,7 @@ impl Digest {
             // order the content, hash them
             eras.get_mut(&era).unwrap().content.sort_unstable();
             eras.get_mut(&era).unwrap().content.dedup();
-            let checksum =
-                Digest::get_era_checksum(&eras.get(&era).unwrap().content, &intervals);
+            let checksum = Digest::get_era_checksum(&eras.get(&era).unwrap().content, &intervals);
 
             eras.get_mut(&era).unwrap().checksum = checksum;
         }
@@ -456,7 +456,10 @@ impl Digest {
         )
     }
 
-    fn recalculate_era_content(current: &mut Digest, latest_interval: u64) -> (Digest, HashSet<EraType>) {
+    fn recalculate_era_content(
+        current: &mut Digest,
+        latest_interval: u64,
+    ) -> (Digest, HashSet<EraType>) {
         let mut eras_to_update = HashSet::new();
         let mut to_modify = HashSet::new();
         for (curr_era, interval_list) in current.eras.clone() {
@@ -483,7 +486,12 @@ impl Digest {
                     .retain(|&x| x != interval);
             }
             if current.eras.contains_key(&new_era) {
-                current.eras.get_mut(&new_era).unwrap().content.push(interval);
+                current
+                    .eras
+                    .get_mut(&new_era)
+                    .unwrap()
+                    .content
+                    .push(interval);
             } else {
                 current.eras.insert(
                     new_era,
@@ -494,24 +502,21 @@ impl Digest {
                 );
             }
         }
-        
-        (
-            current.clone(),
-            eras_to_update,
-        )
+
+        (current.clone(), eras_to_update)
     }
 
     fn get_bucket(latest_interval: u64, ts: Timestamp) -> (EraType, u64, u64) {
         let ts = u64::try_from(
             ts.get_time()
-            .to_system_time()
-            .duration_since(EPOCH_START)
-            .unwrap()
-            .as_millis(),
+                .to_system_time()
+                .duration_since(EPOCH_START)
+                .unwrap()
+                .as_millis(),
         )
         .unwrap();
         let delta = u64::try_from(DELTA.as_millis()).unwrap();
-        
+
         let interval = ts / delta;
         let subinterval = ts / (delta / u64::try_from(SUB_INTERVALS).unwrap());
         let era = Digest::get_era(latest_interval, interval);

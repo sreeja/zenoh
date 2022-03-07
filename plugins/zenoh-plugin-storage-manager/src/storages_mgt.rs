@@ -29,8 +29,8 @@ use zenoh_core::Result as ZResult;
 
 #[path = "replica.rs"]
 pub mod replica;
-pub use replica::*;
 pub(crate) use replica::StorageMessage;
+pub use replica::*;
 
 pub(crate) async fn start_storage(
     storage: Box<dyn zenoh_backend_traits::Storage>,
@@ -42,11 +42,18 @@ pub(crate) async fn start_storage(
 ) -> ZResult<flume::Sender<StorageMessage>> {
     debug!("Start storage {} on {}", admin_key, key_expr);
 
-    
     // TODO: start storage + replica: digest_sub, digest_pub, aligner and align_eval
     // TODO: Key-value stores and time-series to be addressed
     // TODO: fix the name; to be read from the configuration file
-    let replica = Arc::new(Replica::initialize_replica(zenoh.clone(), storage, in_interceptor, out_interceptor, &key_expr, admin_key, HashMap::new()).await);
+    let replica = Replica::initialize_replica(
+        zenoh.clone(),
+        storage,
+        in_interceptor,
+        out_interceptor,
+        &key_expr,
+        &admin_key,
+        HashMap::new(),
+    )
+    .await;
     replica.start_replica().await
-
 }
