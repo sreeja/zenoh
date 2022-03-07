@@ -11,7 +11,7 @@
 // Contributors:
 //   ADLINK zenoh team, <zenoh@adlink-labs.tech>
 //
-use async_std::sync::{RwLock, Mutex};
+use async_std::sync::{Mutex, RwLock};
 use async_std::task::sleep;
 use flume::{Receiver, Sender};
 // use async_std::task;
@@ -27,6 +27,7 @@ use std::fs;
 // use std::fs::File;
 use std::io::Write;
 // use std::iter::FromIterator;
+use async_std::sync::Arc;
 use std::str;
 use std::str::FromStr;
 use std::time::Duration;
@@ -34,14 +35,13 @@ use zenoh::prelude::Sample;
 use zenoh::queryable::EVAL;
 use zenoh::time::Timestamp;
 use zenoh::Session;
-use async_std::sync::Arc;
 // use log::{debug, info};
-use log::{debug, error, trace, warn, info};
+use log::{debug, error, info, trace, warn};
+use zenoh::prelude::*;
 use zenoh::prelude::{KeyExpr, Value};
-use zenoh_core::Result as ZResult;
 use zenoh::queryable;
 use zenoh_backend_traits::Query;
-use zenoh::prelude::*;
+use zenoh_core::Result as ZResult;
 
 #[path = "digest.rs"]
 pub mod digest;
@@ -57,9 +57,10 @@ pub enum StorageMessage {
 }
 
 pub struct Replica {
-    name: String,                                          // name of replica  -- to be replaced by UUID(zenoh)/<storage_type>/<storage_name>
-    session: Arc<Session>,                               // zenoh session used by the replica
+    name: String, // name of replica  -- to be replaced by UUID(zenoh)/<storage_type>/<storage_name>
+    session: Arc<Session>, // zenoh session used by the replica
     key_expr: String, // key expression of the storage to be functioning as a replica
+    digest_key: String,
     stable_log: RwLock<HashMap<String, Timestamp>>, // log entries until the snapshot time
     volatile_log: RwLock<HashMap<String, Timestamp>>, // log entries after the snapshot time
     // storage: RwLock<HashMap<String, (Timestamp, String)>>, // key, (timestamp, value) -- the actual value being stored
@@ -68,32 +69,49 @@ pub struct Replica {
     out_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
     digests_published: RwLock<HashSet<u64>>, // checksum of all digests generated and published by this replica
     digests_processed: RwLock<HashSet<u64>>, // checksum of all digests received by the replica
-    last_snapshot_time: RwLock<Timestamp>, // the latest snapshot time
-    last_interval: RwLock<u64>, // the latest interval
-    digest: RwLock<Option<Digest>>, // the current stable digest
+    last_snapshot_time: RwLock<Timestamp>,   // the latest snapshot time
+    last_interval: RwLock<u64>,              // the latest interval
+    digest: RwLock<Option<Digest>>,          // the current stable digest
 }
 
 // functions to start services required by a replica
 impl Replica {
-    pub async fn initialize_replica(session: Arc<Session>, storage: Box<dyn zenoh_backend_traits::Storage>, in_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>, out_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>, key_expr: &str, admin_key: String, log: HashMap<String, Timestamp>) -> Replica {
+    pub async fn initialize_replica(
+        session: Arc<Session>,
+        storage: Box<dyn zenoh_backend_traits::Storage>,
+        in_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
+        out_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
+        key_expr: &str,
+        admin_key: &str,
+        log: HashMap<String, Timestamp>,
+    ) -> Replica {
         info!("[REPLICA]Openning session...");
 
         let (interval, time) = Replica::get_latest_snapshot_interval_time();
 
-        // let key_expr = if key_expr.ends_with("**") { key_expr.strip_suffix("**").unwrap() } 
-        //                 else { key_expr };
+        // Ex: /@/router/390CEC11A1E34977A1C609A35BC015E6/status/plugins/storages/backends/memory/storages/demo1 -> 390CEC11A1E34977A1C609A35BC015E6-memory-demo1
+        let parts: Vec<&str> = admin_key.split("/").collect();
+        let uuid = parts[3];
+        let storage_type = parts[8];
+        let storage_name = parts[10];
+        let name = format!("{}-{}-{}", uuid, storage_type, storage_name);
 
-        //TODO:get refined key_expr from key_expr and name from admin_key
+        let digest_key = if key_expr.ends_with("**") {
+            format!("{}{}", ALIGN_PREFIX, key_expr.strip_suffix("**").unwrap())
+        } else {
+            format!("{}{}", ALIGN_PREFIX, key_expr)
+        };
 
         let replica = Replica {
-            name: admin_key,
+            name: name, // unique name UUID-<storage_type>-<storage_name>
             session: session,
             key_expr: key_expr.to_string(),
+            digest_key: digest_key,
             stable_log: RwLock::new(HashMap::<String, Timestamp>::new()),
             volatile_log: RwLock::new(HashMap::<String, Timestamp>::new()),
             storage: Mutex::new(storage),
             in_interceptor: in_interceptor,
-            out_interceptor:out_interceptor,
+            out_interceptor: out_interceptor,
             digests_published: RwLock::new(HashSet::<u64>::new()),
             digests_processed: RwLock::new(HashSet::<u64>::new()),
             last_snapshot_time: RwLock::new(time),
@@ -107,8 +125,7 @@ impl Replica {
         replica
     }
 
-
-    pub async fn start_replica(&self) -> ZResult<Sender<StorageMessage>>{
+    pub async fn start_replica(&self) -> ZResult<Sender<StorageMessage>> {
         // channel to queue digests to be aligned
         let (tx_digest, rx_digest) = flume::unbounded();
         // digest sub
@@ -138,14 +155,15 @@ impl Replica {
     }
 
     pub async fn start_digest_sub(&self, tx: Sender<(String, Digest)>) {
-        let key_expr = format!("{}{}**", ALIGN_PREFIX, self.key_expr);
         let mut received = HashMap::<String, Timestamp>::new();
+
+        let digest_key = format!("{}**", self.digest_key);
 
         debug!(
             "[DIGEST_SUB]Creating Subscriber named {} on '{}'...",
-            self.name, key_expr
+            self.name, digest_key
         );
-        let mut subscriber = self.session.subscribe(&key_expr).await.unwrap();
+        let mut subscriber = self.session.subscribe(&digest_key).await.unwrap();
 
         loop {
             let sample = subscriber.receiver().next().await;
@@ -186,13 +204,13 @@ impl Replica {
     }
 
     pub async fn start_digest_pub(&self) {
-        let key_expr = format!("{}{}{}", ALIGN_PREFIX, self.key_expr, self.name);
+        let digest_key = format!("{}{}", self.digest_key, self.name);
 
         debug!(
             "[DIGEST_PUB]Declaring digest on key expression '{}'...",
-            key_expr
+            digest_key
         );
-        let expr_id = self.session.declare_expr(&key_expr).await.unwrap();
+        let expr_id = self.session.declare_expr(&digest_key).await.unwrap();
         println!("[DIGEST_PUB] => ExprId {}", expr_id);
 
         println!("[DIGEST_PUB]Declaring publication on '{}'...", expr_id);
@@ -221,10 +239,15 @@ impl Replica {
     }
 
     pub async fn start_align_eval(&self) {
-        let key_expr = format!("{}{}{}/**", ALIGN_PREFIX, self.key_expr, self.name);
+        let digest_key = format!("{}{}/**", self.digest_key, self.name);
 
-        debug!("[ALIGN_EVAL]Creating Queryable on '{}'...", key_expr);
-        let mut queryable = self.session.queryable(&key_expr).kind(EVAL).await.unwrap();
+        debug!("[ALIGN_EVAL]Creating Queryable on '{}'...", digest_key);
+        let mut queryable = self
+            .session
+            .queryable(&digest_key)
+            .kind(EVAL)
+            .await
+            .unwrap();
 
         loop {
             let query = queryable.receiver().next().await;
@@ -280,72 +303,76 @@ impl Replica {
 
     async fn start_storage_queryable_subscriber(&self) -> ZResult<Sender<StorageMessage>> {
         let (tx, rx) = flume::bounded(1);
-    
+
         // TODO:do we need a task here? if yes, why?
         // task::spawn(async move {
-            // subscribe on key_expr
-            let mut storage_sub = match self.session.subscribe(&self.key_expr).await {
-                Ok(storage_sub) => storage_sub,
-                Err(e) => {
-                    error!("Error starting storage {} : {}", self.name, e);
-                    return Err(e); 
-                }
-            };
-    
-            // answer to queries on key_expr
-            let mut storage_queryable = match self.session.queryable(&self.key_expr).kind(queryable::STORAGE).await
-            {
-                Ok(storage_queryable) => storage_queryable,
-                Err(e) => {
-                    error!("Error starting storage {} : {}", self.name, e);
-                    return Err(e);
-                }
-            };
-    
-            loop {
-                select!(
-                    // on sample for key_expr
-                    sample = storage_sub.next() => {
-                        // Call incoming data interceptor (if any)
-                        self.process_sample(sample.unwrap()).await;
-                    },
-                    // on query on key_expr
-                    query = storage_queryable.next() => {
-                        let q = query.unwrap();
-                        // wrap zenoh::Query in zenoh_backend_traits::Query
-                        // with outgoing interceptor
-                        let query = Query::new(q, self.out_interceptor.clone());
-                        let mut storage = self.storage.lock().await;
-                        if let Err(e) = storage.on_query(query).await {
-                            warn!("Storage {} raised an error receiving a query: {}", self.name, e);
-                        }
-                        drop(storage);
-                    },
-                    // on storage handle drop
-                    message = rx.recv_async() => {
-                        match message {
-                            Ok(StorageMessage::Stop) => {
-                                trace!("Dropping storage {}", self.name);
-                                return Ok(tx);
-                            },
-                            Ok(StorageMessage::GetStatus(tx)) => {
-                                let storage = self.storage.lock().await;
-                                std::mem::drop(tx.send(storage.get_admin_status()).await);
-                                drop(storage);
-                            }
-                            Err(e) => {
-                                error!("Storage Message Channel Error: {}", e); 
-                                return Err(e.into());
-                            },
-                        };
-                    }
-                );
+        // subscribe on key_expr
+        let mut storage_sub = match self.session.subscribe(&self.key_expr).await {
+            Ok(storage_sub) => storage_sub,
+            Err(e) => {
+                error!("Error starting storage {} : {}", self.name, e);
+                return Err(e);
             }
+        };
+
+        // answer to queries on key_expr
+        let mut storage_queryable = match self
+            .session
+            .queryable(&self.key_expr)
+            .kind(queryable::STORAGE)
+            .await
+        {
+            Ok(storage_queryable) => storage_queryable,
+            Err(e) => {
+                error!("Error starting storage {} : {}", self.name, e);
+                return Err(e);
+            }
+        };
+
+        loop {
+            select!(
+                // on sample for key_expr
+                sample = storage_sub.next() => {
+                    // Call incoming data interceptor (if any)
+                    self.process_sample(sample.unwrap()).await;
+                },
+                // on query on key_expr
+                query = storage_queryable.next() => {
+                    let q = query.unwrap();
+                    // wrap zenoh::Query in zenoh_backend_traits::Query
+                    // with outgoing interceptor
+                    let query = Query::new(q, self.out_interceptor.clone());
+                    let mut storage = self.storage.lock().await;
+                    if let Err(e) = storage.on_query(query).await {
+                        warn!("Storage {} raised an error receiving a query: {}", self.name, e);
+                    }
+                    drop(storage);
+                },
+                // on storage handle drop
+                message = rx.recv_async() => {
+                    match message {
+                        Ok(StorageMessage::Stop) => {
+                            trace!("Dropping storage {}", self.name);
+                            return Ok(tx);
+                        },
+                        Ok(StorageMessage::GetStatus(tx)) => {
+                            let storage = self.storage.lock().await;
+                            std::mem::drop(tx.send(storage.get_admin_status()).await);
+                            drop(storage);
+                        }
+                        Err(e) => {
+                            error!("Storage Message Channel Error: {}", e);
+                            return Err(e.into());
+                        },
+                    };
+                }
+            );
+        }
         // });
         // tx
     }
 
-    async fn process_sample(&self, sample:Sample) {
+    async fn process_sample(&self, sample: Sample) {
         let mut sample = if let Some(ref interceptor) = self.in_interceptor {
             interceptor(sample)
         } else {
@@ -606,9 +633,8 @@ impl Replica {
         let mut result = HashMap::new();
         for content in missing_content {
             let selector = format!(
-                "{}{}{}/{}/*/*/*/{}",
-                ALIGN_PREFIX,
-                self.key_expr,
+                "{}{}/{}/*/*/*/{}",
+                self.digest_key,
                 from.to_string(),
                 timestamp,
                 content
@@ -665,9 +691,8 @@ impl Replica {
         timestamp: Timestamp,
     ) -> Vec<Timestamp> {
         let selector = format!(
-            "{}{}{}/{}/cold/*",
-            ALIGN_PREFIX,
-            self.key_expr,
+            "{}{}/{}/cold/*",
+            self.digest_key,
             other_rep.to_string(),
             timestamp
         );
@@ -675,22 +700,27 @@ impl Replica {
         // while reply_content.is_none() {
         //     let reply_content = self.perform_query(selector).await;
         // }
-        let other_intervals = serde_json::from_str(&String::from_utf8_lossy(&reply_content.unwrap().1.1.payload.contiguous())).unwrap_or(HashMap::new());
+        let other_intervals = serde_json::from_str(&String::from_utf8_lossy(
+            &reply_content.unwrap().1 .1.payload.contiguous(),
+        ))
+        .unwrap_or(HashMap::new());
         // get era diff
         let diff_intervals = this.get_interval_diff(other_intervals);
         let mut diff_subintervals = HashSet::<u64>::new();
         for each_int in diff_intervals {
             // get subintervals for mismatching intervals from other_rep
             let selector = format!(
-                "{}{}{}/{}/*/{}",
-                ALIGN_PREFIX,
-                self.key_expr,
+                "{}{}/{}/*/{}",
+                self.digest_key,
                 other_rep.to_string(),
                 timestamp,
                 each_int
             );
             let reply_content = self.perform_query(selector).await;
-            let other_subintervals = serde_json::from_str(&String::from_utf8_lossy(&reply_content.unwrap().1.1.payload.contiguous())).unwrap_or(HashMap::new());
+            let other_subintervals = serde_json::from_str(&String::from_utf8_lossy(
+                &reply_content.unwrap().1 .1.payload.contiguous(),
+            ))
+            .unwrap_or(HashMap::new());
             // get intervals diff
             let diff = this.get_subinterval_diff(other_subintervals);
             debug!("[ALIGNER] Diff in interval {} is {:?}", each_int, diff);
@@ -705,22 +735,27 @@ impl Replica {
         for each_sub in diff_subintervals {
             //get content for mismatching intervals from other_rep
             let selector = format!(
-                "{}{}{}/{}/*/*/{}",
-                ALIGN_PREFIX,
-                self.key_expr,
+                "{}{}/{}/*/*/{}",
+                self.digest_key,
                 other_rep.to_string(),
                 timestamp,
                 each_sub
             );
             let reply_content = self.perform_query(selector).await;
-            let other_content = serde_json::from_str(&String::from_utf8_lossy(&reply_content.unwrap().1.1.payload.contiguous())).unwrap_or(HashMap::new());
+            let other_content = serde_json::from_str(&String::from_utf8_lossy(
+                &reply_content.unwrap().1 .1.payload.contiguous(),
+            ))
+            .unwrap_or(HashMap::new());
             // get subintervals diff
             diff_content.append(&mut this.get_full_content_diff(other_content));
         }
         diff_content
     }
 
-    async fn perform_query(&self, selector: String) -> Option<(KeyExpr<'static>, (Timestamp, Value))> {
+    async fn perform_query(
+        &self,
+        selector: String,
+    ) -> Option<(KeyExpr<'static>, (Timestamp, Value))> {
         debug!(
             "[ALIGNER]Sending Query for getting intervals of cold alignment '{}'...",
             selector
@@ -754,36 +789,40 @@ impl Replica {
         // get era diff
         let diff_intervals = this.get_interval_diff(other_intervals);
 
-        let diff_subintervals = HashSet::new();
+        let mut diff_subintervals = HashSet::new();
         for each_int in diff_intervals {
             // get subintervals for mismatching intervals from other_rep
             let selector = format!(
-                "{}{}{}/{}/*/{}",
-                ALIGN_PREFIX,
-                self.key_expr,
+                "{}{}/{}/*/{}",
+                self.digest_key,
                 other_rep.to_string(),
                 other.timestamp,
                 each_int
             );
             let reply_content = self.perform_query(selector).await;
-            let other_subintervals = serde_json::from_str(&String::from_utf8_lossy(&reply_content.unwrap().1.1.payload.contiguous())).unwrap_or(HashMap::new());
+            let other_subintervals = serde_json::from_str(&String::from_utf8_lossy(
+                &reply_content.unwrap().1 .1.payload.contiguous(),
+            ))
+            .unwrap_or(HashMap::new());
             // get intervals diff
-            diff_subintervals.union(&this.get_subinterval_diff(other_subintervals));
+            diff_subintervals.extend::<HashSet<u64>>(this.get_subinterval_diff(other_subintervals));
         }
 
         let mut diff_content = Vec::new();
         for each_sub in diff_subintervals {
             //get content for mismatching intervals from other_rep
             let selector = format!(
-                "{}{}{}/{}/*/*/{}",
-                ALIGN_PREFIX,
-                self.key_expr,
+                "{}{}/{}/*/*/{}",
+                self.digest_key,
                 other_rep.to_string(),
                 other.timestamp,
                 each_sub
             );
             let reply_content = self.perform_query(selector).await;
-            let other_content = serde_json::from_str(&String::from_utf8_lossy(&reply_content.unwrap().1.1.payload.contiguous())).unwrap_or(HashMap::new());
+            let other_content = serde_json::from_str(&String::from_utf8_lossy(
+                &reply_content.unwrap().1 .1.payload.contiguous(),
+            ))
+            .unwrap_or(HashMap::new());
             // get subintervals diff
             diff_content.append(&mut this.get_full_content_diff(other_content));
         }
@@ -812,15 +851,17 @@ impl Replica {
         for each_sub in diff_subintervals {
             //get content for mismatching intervals from other_rep
             let selector = format!(
-                "{}{}{}/{}/*/*/{}",
-                ALIGN_PREFIX,
-                self.key_expr,
+                "{}{}/{}/*/*/{}",
+                self.digest_key,
                 other_rep.to_string(),
                 other.timestamp,
                 each_sub
             );
             let reply_content = self.perform_query(selector).await;
-            let other_content = serde_json::from_str(&String::from_utf8_lossy(&reply_content.unwrap().1.1.payload.contiguous())).unwrap_or(HashMap::new());
+            let other_content = serde_json::from_str(&String::from_utf8_lossy(
+                &reply_content.unwrap().1 .1.payload.contiguous(),
+            ))
+            .unwrap_or(HashMap::new());
             // get subintervals diff
             diff_content.append(&mut this.get_full_content_diff(other_content));
         }
@@ -840,8 +881,8 @@ impl Replica {
         Option<String>,
         Option<Timestamp>,
     ) {
-        // filter out the redundant part => /digest<key_expr><name>/
-        let filtering_out_len = ALIGN_PREFIX.len() + self.key_expr.len() + self.name.len() + 1;
+        // filter out the redundant part => /<digest_key><name>/
+        let filtering_out_len = self.digest_key.len() + self.name.len() + 1;
         let (_, selector) = selector.split_at(filtering_out_len);
         let parts: Vec<&str> = selector.split("/").collect();
         // println!("[PARSING>>>>] {:?}", parts);
@@ -943,9 +984,9 @@ impl Replica {
         //         // );
         //         return Some(serde_json::from_str(reply.data).unwrap());
         //     }
-        //     None       
+        //     None
         // }
-        // 
+        //
         // let storage = self.storage.read().await;
         // for (k, v) in &(*storage) {
         //     if v.0.to_string() == ts.to_string() {
