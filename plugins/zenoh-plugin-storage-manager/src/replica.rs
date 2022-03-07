@@ -14,19 +14,13 @@
 use async_std::sync::{Mutex, RwLock};
 use async_std::task::sleep;
 use flume::{Receiver, Sender};
-// use async_std::task;
 use futures::select;
 use futures::stream::StreamExt;
-// use futures::FutureExt;
 use futures::join;
-// use futures::prelude::*;
-// use std::array::IntoIter;
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::fs;
-// use std::fs::File;
 use std::io::Write;
-// use std::iter::FromIterator;
 use async_std::sync::Arc;
 use std::str;
 use std::str::FromStr;
@@ -35,7 +29,6 @@ use zenoh::prelude::Sample;
 use zenoh::queryable::EVAL;
 use zenoh::time::Timestamp;
 use zenoh::Session;
-// use log::{debug, info};
 use log::{debug, error, info, trace, warn};
 use zenoh::prelude::*;
 use zenoh::prelude::{KeyExpr, Value};
@@ -49,7 +42,6 @@ pub mod digest;
 pub use digest::*;
 
 const ALIGN_PREFIX: &str = "/@-digest";
-// const OVERWRITTEN_DATA: &str = "IRRELEVANT";
 const PUBLICATION_INTERVAL: Duration = Duration::from_secs(5);
 
 pub enum StorageMessage {
@@ -58,14 +50,13 @@ pub enum StorageMessage {
 }
 
 pub struct Replica {
-    name: String, // name of replica  -- to be replaced by UUID(zenoh)/<storage_type>/<storage_name>
+    name: String, // name of replica  -- UUID(zenoh)-<storage_type>-<storage_name>
     session: Arc<Session>, // zenoh session used by the replica
     key_expr: String, // key expression of the storage to be functioning as a replica
-    digest_key: String,
+    digest_key: String,  // key expression on which digest is published/subscribed
     stable_log: RwLock<HashMap<String, Timestamp>>, // log entries until the snapshot time
     volatile_log: RwLock<HashMap<String, Timestamp>>, // log entries after the snapshot time
-    // storage: RwLock<HashMap<String, (Timestamp, String)>>, // key, (timestamp, value) -- the actual value being stored
-    storage: Mutex<Box<dyn zenoh_backend_traits::Storage>>,
+    storage: Mutex<Box<dyn zenoh_backend_traits::Storage>>, // -- the actual value being stored
     in_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
     out_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
     digests_published: RwLock<HashSet<u64>>, // checksum of all digests generated and published by this replica
@@ -104,7 +95,7 @@ impl Replica {
         };
 
         let replica = Replica {
-            name: name, // unique name UUID-<storage_type>-<storage_name>
+            name: name, 
             session: session,
             key_expr: key_expr.to_string(),
             digest_key: digest_key,
@@ -141,6 +132,7 @@ impl Replica {
         //updating snapshot time
         let snapshot_task = self.update_snapshot_task();
 
+        //actual storage
         let storage_task = self.start_storage_queryable_subscriber();
 
         let result = join!(
@@ -225,7 +217,6 @@ impl Replica {
             let digest = self.digest.read().await;
             let digest = digest.as_ref().unwrap().compress();
             let digest_json = serde_json::to_string(&digest).unwrap();
-            // self.save_digest().await;
             let mut digests_published = self.digests_published.write().await;
             digests_published.insert(digest.checksum);
             drop(digests_published);
@@ -369,8 +360,6 @@ impl Replica {
                 }
             );
         }
-        // });
-        // tx
     }
 
     async fn process_sample(&self, sample: Sample) {
@@ -543,19 +532,13 @@ impl Replica {
     }
 
     async fn flush(&self) {
-        // let storage_filename = format!("{}.json", self.name);
         let log_filename = format!("{}_log.json", self.name.replace("/", "-"));
-        // let mut file = fs::File::create(storage_filename).unwrap();
         let mut log_file = fs::File::create(log_filename).unwrap();
 
-        // let storage = self.storage.read().await;
         let log = self.stable_log.read().await;
-        // let j = serde_json::to_string(&(*storage)).unwrap();
-        // file.write_all(j.as_bytes()).unwrap();
         let l = serde_json::to_string(&(*log)).unwrap();
         log_file.write_all(l.as_bytes()).unwrap();
         drop(log);
-        // drop(storage);
     }
 
     fn get_latest_snapshot_interval_time() -> (u64, Timestamp) {
