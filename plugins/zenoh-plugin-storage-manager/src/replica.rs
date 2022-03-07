@@ -42,6 +42,7 @@ use zenoh::prelude::{KeyExpr, Value};
 use zenoh::queryable;
 use zenoh_backend_traits::Query;
 use zenoh_core::Result as ZResult;
+use zenoh::net::protocol::io::SplitBuffer;
 
 #[path = "digest.rs"]
 pub mod digest;
