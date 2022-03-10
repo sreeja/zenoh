@@ -11,31 +11,31 @@
 // Contributors:
 //   ADLINK zenoh team, <zenoh@adlink-labs.tech>
 //
+use async_std::sync::Arc;
 use async_std::sync::{Mutex, RwLock};
 use async_std::task::sleep;
 use flume::{Receiver, Sender};
+use futures::join;
 use futures::select;
 use futures::stream::StreamExt;
-use futures::join;
+use log::{debug, error, info, trace, warn};
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::fs;
 use std::io::Write;
-use async_std::sync::Arc;
 use std::str;
 use std::str::FromStr;
 use std::time::Duration;
+use zenoh::net::protocol::io::SplitBuffer;
 use zenoh::prelude::Sample;
-use zenoh::queryable::EVAL;
-use zenoh::time::Timestamp;
-use zenoh::Session;
-use log::{debug, error, info, trace, warn};
 use zenoh::prelude::*;
 use zenoh::prelude::{KeyExpr, Value};
 use zenoh::queryable;
+use zenoh::queryable::EVAL;
+use zenoh::time::Timestamp;
+use zenoh::Session;
 use zenoh_backend_traits::Query;
 use zenoh_core::Result as ZResult;
-use zenoh::net::protocol::io::SplitBuffer;
 
 #[path = "digest.rs"]
 pub mod digest;
@@ -50,10 +50,10 @@ pub enum StorageMessage {
 }
 
 pub struct Replica {
-    name: String, // name of replica  -- UUID(zenoh)-<storage_type>-<storage_name>
+    name: String,          // name of replica  -- UUID(zenoh)-<storage_type>-<storage_name>
     session: Arc<Session>, // zenoh session used by the replica
-    key_expr: String, // key expression of the storage to be functioning as a replica
-    digest_key: String,  // key expression on which digest is published/subscribed
+    key_expr: String,      // key expression of the storage to be functioning as a replica
+    digest_key: String,    // key expression on which digest is published/subscribed
     stable_log: RwLock<HashMap<String, Timestamp>>, // log entries until the snapshot time
     volatile_log: RwLock<HashMap<String, Timestamp>>, // log entries after the snapshot time
     storage: Mutex<Box<dyn zenoh_backend_traits::Storage>>, // -- the actual value being stored
@@ -95,7 +95,7 @@ impl Replica {
         };
 
         let replica = Replica {
-            name: name, 
+            name: name,
             session: session,
             key_expr: key_expr.to_string(),
             digest_key: digest_key,
@@ -363,6 +363,7 @@ impl Replica {
     }
 
     async fn process_sample(&self, sample: Sample) {
+        debug!("[STORAGE] Processing sample: {}", sample);
         let mut sample = if let Some(ref interceptor) = self.in_interceptor {
             interceptor(sample)
         } else {
@@ -898,6 +899,7 @@ impl Replica {
         (timestamp, era, interval, subinterval, content)
     }
 
+    // TODO: make this return a Sample. Do it with a better key expression with a value filter
     async fn get_value(
         &self,
         era: String,
@@ -935,24 +937,58 @@ impl Replica {
         if content.is_some() {
             // println!("[ALIGN_EVAL] getting update from timestamp {}", ts);
             let ts = content.unwrap();
-            return self.get_entry_with_ts(ts).await;
+            let entry = self.get_entry_with_ts(ts).await;
+            if entry.is_some() {
+                // TODO: make this better.. how to fix it?
+                // return Some(serde_json::to_string(&entry).unwrap());
+                return Some(
+                    serde_json::to_string(&(
+                        entry.as_ref().unwrap().key_expr.as_str(),
+                        (entry.as_ref().unwrap().timestamp,
+                        String::from_utf8_lossy(
+                            &entry.as_ref().unwrap().value.payload.contiguous(),
+                        )),
+                    ))
+                    .unwrap(),
+                );
+            }
         }
 
         None
     }
 
     // TODO: replace this and directly read from storage calling storage infra
-    async fn get_entry_with_ts(&self, timestamp: Timestamp) -> Option<String> {
+    async fn get_entry_with_ts(&self, timestamp: Timestamp) -> Option<Sample> {
         // TODO: query on /keyexpr/key?starttime=ts;stoptime=ts
         // get corresponding key from log
         // let mut key: Option<String> = None;
+        let mut key = None;
         let log = self.stable_log.read().await;
         for (k, ts) in &*log {
             if ts.clone() == timestamp {
-                return Some(k.to_string());
+                key = Some(k.to_string());
+            }
+        }
+        // None
+
+        if key.is_some() {
+            let mut replies = self.session.get(&key.unwrap()).await.unwrap();
+            if let Some(reply) = replies.next().await {
+                // println!(
+                //     ">> Received ('{}': '{}')",
+                //     reply.data.key_expr.as_str(),
+                //     String::from_utf8_lossy(&reply.data.value.payload.contiguous())
+                // )
+                if reply.data.timestamp.is_some() {
+                    if reply.data.timestamp.unwrap() == timestamp {
+                        return Some(reply.data);
+                    }
+                }
             }
         }
         None
+        // TODO: query storage for this key, getting value + timestamp.. if timestamp is the same as the requested one, return the key-value pair. If it is older, raise an error and if it is newer, send an empty response since the data is no longer valid.
+
         // if key.is_none() {
         //     warn!("Corresponding entry for timestamp {} not found in log, might have been replaced.", timestamp);
         //     return None;
