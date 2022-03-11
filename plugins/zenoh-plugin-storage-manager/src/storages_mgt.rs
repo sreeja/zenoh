@@ -26,6 +26,7 @@ use zenoh::prelude::*;
 use zenoh::Session;
 // use zenoh_backend_traits::Query;
 use zenoh_core::Result as ZResult;
+use zenoh_backend_traits::config::ReplicaConfig;
 
 #[path = "replica.rs"]
 pub mod replica;
@@ -34,6 +35,7 @@ pub use replica::*;
 
 pub(crate) async fn start_storage(
     storage: Box<dyn zenoh_backend_traits::Storage>,
+    config: Option<ReplicaConfig>,
     admin_key: String,
     key_expr: String,
     in_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
@@ -46,6 +48,7 @@ pub(crate) async fn start_storage(
     // TODO: Key-value stores and time-series to be addressed
     // TODO: fix the name; to be read from the configuration file
     let replica = Replica::initialize_replica(
+        config,
         zenoh.clone(),
         storage,
         in_interceptor,

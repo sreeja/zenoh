@@ -36,6 +36,7 @@ use zenoh::time::Timestamp;
 use zenoh::Session;
 use zenoh_backend_traits::Query;
 use zenoh_core::Result as ZResult;
+use zenoh_backend_traits::config::ReplicaConfig;
 
 #[path = "digest.rs"]
 pub mod digest;
@@ -52,6 +53,7 @@ pub enum StorageMessage {
 pub struct Replica {
     name: String,          // name of replica  -- UUID(zenoh)-<storage_type>-<storage_name>
     session: Arc<Session>, // zenoh session used by the replica
+    replicate: bool, // if true, replicate, else a normal storage
     key_expr: String,      // key expression of the storage to be functioning as a replica
     digest_key: String,    // key expression on which digest is published/subscribed
     stable_log: RwLock<HashMap<String, Timestamp>>, // log entries until the snapshot time
@@ -69,6 +71,7 @@ pub struct Replica {
 // functions to start services required by a replica
 impl Replica {
     pub async fn initialize_replica(
+        config: Option<ReplicaConfig>,
         session: Arc<Session>,
         storage: Box<dyn zenoh_backend_traits::Storage>,
         in_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
@@ -77,7 +80,14 @@ impl Replica {
         admin_key: &str,
         log: HashMap<String, Timestamp>,
     ) -> Replica {
-        info!("[REPLICA]Openning session...");
+
+        // TODO: use config to decide whether to replicate or not and if replicating, the configuration to be set in replica and digest
+        let replicate = if config.is_some() {
+            true
+        } else {
+            false
+        };
+        info!("[REPLICA]Opening session...");
 
         let (interval, time) = Replica::get_latest_snapshot_interval_time();
 

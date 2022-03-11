@@ -321,7 +321,6 @@ impl StorageConfig {
         };
         let replica_config = match config.get("replica_config") {
             Some(s) => {
-                // TODO: parse the configuration
                 // TODO: figure out how to parse json automatically with default values
                 let align_prefix = match s.get("align_prefix") {
                     Some(Value::String(p)) => p.clone(), 
