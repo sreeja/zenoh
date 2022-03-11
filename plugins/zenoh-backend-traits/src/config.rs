@@ -32,9 +32,21 @@ pub struct StorageConfig {
     pub strip_prefix: String,
     pub volume_id: String,
     pub volume_cfg: Value,
-    // #[as_ref]
-    // #[as_mut]
-    // pub rest: Map<String, Value>,
+    // If replica_config is present, start a replica, else a normal storage
+    // TODO: need to distinguish between time-series and key-value
+    #[as_ref]
+    #[as_mut]
+    pub replica_config: Option<ReplicaConfig>,
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReplicaConfig {
+    align_prefix: String,
+    publication_interval: std::time::Duration,
+    propagation_delay: std::time::Duration,
+    delta: std::time::Duration,
+    subintervals: usize,
+    hot: usize,
+    warm: usize,
 }
 #[derive(Debug)]
 pub enum ConfigDiff {
@@ -307,12 +319,100 @@ impl StorageConfig {
             ),
             _ => bail!("Invalid type for field `volume` of storage `{}`. Only strings or objects with at least the `id` field are accepted.", storage_name)
         };
+        let replica_config = match config.get("replica_config") {
+            Some(s) => {
+                // TODO: parse the configuration
+                // TODO: figure out how to parse json automatically with default values
+                let align_prefix = match s.get("align_prefix") {
+                    Some(Value::String(p)) => p.clone(), 
+                    None => String::from("/@-digest"),
+                    _ => bail!("`align_prefix` in `replica_config` in `storage` field of `{}`'s `{}` backend configuration must be an integer", plugin_name, backend_name)
+                };
+                let publication_interval = match s.get("publication_interval") {
+                    Some(p) => {
+                        let p = p.to_string().parse::<u64>();
+                        if p.is_err() {
+                            bail!("`publication_interval` in `replica_config` in `storage` field of `{}`'s `{}` backend configuration must be an integer", plugin_name, backend_name)
+                        } else {
+                            p.unwrap()
+                        }
+                    }
+                    None => 5,
+                };
+                let propagation_delay = match s.get("propagation_delay") {
+                    Some(p) => {
+                        let p = p.to_string().parse::<u64>();
+                        if p.is_err() {
+                            bail!("`propagation_delay` in `replica_config` in `storage` field of `{}`'s `{}` backend configuration must be an integer", plugin_name, backend_name)
+                        } else {
+                            p.unwrap()
+                        }
+                    }
+                    None => 200,
+                };
+                let delta = match s.get("delta") {
+                    Some(d) => {
+                        let d = d.to_string().parse::<u64>();
+                        if d.is_err() {
+                            bail!("`delta` in `replica_config` in `storage` field of `{}`'s `{}` backend configuration must be an integer", plugin_name, backend_name)
+                        } else {
+                            d.unwrap()
+                        }
+                    }
+                    None => 500,
+                };
+                let subintervals = match s.get("subintervals") {
+                    Some(i) => {
+                        let i = i.to_string().parse::<usize>();
+                        if i.is_err() {
+                            bail!("`subintervals` in `replica_config` in `storage` field of `{}`'s `{}` backend configuration must be an integer", plugin_name, backend_name)
+                        } else {
+                            i.unwrap()
+                        }
+                    }
+                    None => 10,
+                };
+                let hot = match s.get("hot") {
+                    Some(h) => {
+                        let h = h.to_string().parse::<usize>();
+                        if h.is_err() {
+                            bail!("`hot` in `replica_config` in `storage` field of `{}`'s `{}` backend configuration must be an integer", plugin_name, backend_name)
+                        } else {
+                            h.unwrap()
+                        }
+                    }
+                    None => 2,
+                };
+                let warm = match s.get("warm") {
+                    Some(w) => {
+                        let w = w.to_string().parse::<usize>();
+                        if w.is_err() {
+                            bail!("`warm` in `replica_config` in `storage` field of `{}`'s `{}` backend configuration must be an integer", plugin_name, backend_name)
+                        } else {
+                            w.unwrap()
+                        }
+                    }
+                    None => 5,
+                };
+                Some( ReplicaConfig {
+                    align_prefix,
+                    publication_interval: std::time::Duration::from_secs(publication_interval),
+                    propagation_delay: std::time::Duration::from_millis(propagation_delay),
+                    delta: std::time::Duration::from_millis(delta),
+                    subintervals: subintervals,
+                    hot: hot,
+                    warm: warm
+                })
+            },
+            None => None,
+        };
         Ok(StorageConfig {
             name: storage_name.into(),
             key_expr,
             strip_prefix,
             volume_id,
             volume_cfg,
+            replica_config,
         })
     }
 }
