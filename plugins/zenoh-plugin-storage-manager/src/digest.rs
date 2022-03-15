@@ -25,11 +25,20 @@ use zenoh::time::Timestamp;
 
 // define DELTA, EPOCH_START, etc
 pub const EPOCH_START: SystemTime = SystemTime::UNIX_EPOCH;
-pub const PROPAGATION_DELAY: Duration = Duration::from_millis(200);
-pub const DELTA: Duration = Duration::from_millis(1000);
-const SUB_INTERVALS: usize = 10;
-const HOT: usize = 5;
-const WARM: usize = 10;
+// pub const PROPAGATION_DELAY: Duration = Duration::from_millis(200);
+// pub const DELTA: Duration = Duration::from_millis(1000);
+// const SUB_INTERVALS: usize = 10;
+// const HOT: usize = 5;
+// const WARM: usize = 10;
+
+#[derive(Eq, PartialEq, Clone, Debug, Deserialize, Serialize)]
+pub struct DigestConfig {
+    pub propagation_delay: Duration,
+    pub delta: Duration,
+    pub sub_intervals: usize,
+    pub hot: usize,
+    pub warm: usize,
+}
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct Log {
@@ -41,7 +50,8 @@ pub struct Log {
 
 #[derive(Eq, PartialEq, Clone, Debug, Deserialize, Serialize)]
 pub struct Digest {
-    pub timestamp: zenoh::time::Timestamp, // check this if can be made Timestamp
+    pub timestamp: zenoh::time::Timestamp, 
+    pub config: DigestConfig,
     pub checksum: u64,
     pub eras: HashMap<EraType, Interval>,
     pub intervals: HashMap<u64, Interval>,
@@ -120,11 +130,12 @@ impl Checksum for u64 {
 impl Digest {
     pub fn create_digest(
         timestamp: zenoh::time::Timestamp,
+        config: DigestConfig,
         raw_log: Vec<Timestamp>,
         latest_interval: u64,
         latest_snapshot_time: Timestamp,
     ) -> Digest {
-        let processed_log = Digest::process_log(raw_log, latest_interval, latest_snapshot_time);
+        let processed_log = Digest::process_log(&config, raw_log, latest_interval, latest_snapshot_time);
         let (subinterval_content, interval_content, era_content) =
             Digest::populate_content(processed_log);
 
@@ -157,6 +168,7 @@ impl Digest {
 
         Digest {
             timestamp: timestamp,
+            config: config,
             checksum: Digest::get_digest_checksum(&era_hash),
             eras: era_hash,
             intervals: interval_hash,
@@ -320,6 +332,7 @@ impl Digest {
         // update the shared value
         Digest {
             timestamp: last_snapshot_time,
+            config: current.config,
             checksum: Digest::get_digest_checksum(&eras),
             eras: eras,
             intervals: intervals,
@@ -337,7 +350,7 @@ impl Digest {
         let mut subintervals_to_update = HashSet::new();
 
         for entry in content {
-            let (era, interval, subinterval) = Digest::get_bucket(latest_interval, entry);
+            let (era, interval, subinterval) = Digest::get_bucket(&current.config, latest_interval, entry);
             eras_to_update.insert(era.clone());
             intervals_to_update.insert(interval);
             subintervals_to_update.insert(subinterval);
@@ -405,7 +418,7 @@ impl Digest {
         let mut subintervals_to_update = HashSet::new();
 
         for entry in redundant_content {
-            let (era, interval, subinterval) = Digest::get_bucket(latest_interval, entry);
+            let (era, interval, subinterval) = Digest::get_bucket(&current.config, latest_interval, entry);
 
             if current.subintervals.contains_key(&subinterval) {
                 current
@@ -465,7 +478,7 @@ impl Digest {
         for (curr_era, interval_list) in current.eras.clone() {
             if curr_era == EraType::Hot || curr_era == EraType::Warm {
                 for interval in &interval_list.content {
-                    let new_era = Digest::get_era(latest_interval, *interval);
+                    let new_era = Digest::get_era(&current.config, latest_interval, *interval);
                     if new_era != curr_era {
                         to_modify.insert((*interval, curr_era.clone(), new_era.clone()));
                         eras_to_update.insert(curr_era.clone());
@@ -506,7 +519,7 @@ impl Digest {
         (current.clone(), eras_to_update)
     }
 
-    fn get_bucket(latest_interval: u64, ts: Timestamp) -> (EraType, u64, u64) {
+    fn get_bucket(config: &DigestConfig, latest_interval: u64, ts: Timestamp) -> (EraType, u64, u64) {
         let ts = u64::try_from(
             ts.get_time()
                 .to_system_time()
@@ -515,18 +528,18 @@ impl Digest {
                 .as_millis(),
         )
         .unwrap();
-        let delta = u64::try_from(DELTA.as_millis()).unwrap();
+        let delta = u64::try_from(config.delta.as_millis()).unwrap();
 
         let interval = ts / delta;
-        let subinterval = ts / (delta / u64::try_from(SUB_INTERVALS).unwrap());
-        let era = Digest::get_era(latest_interval, interval);
+        let subinterval = ts / (delta / u64::try_from(config.sub_intervals).unwrap());
+        let era = Digest::get_era(config, latest_interval, interval);
         (era, interval, subinterval)
     }
 
-    fn get_era(latest_interval: u64, interval: u64) -> EraType {
-        let hot_min = latest_interval - u64::try_from(HOT).unwrap() + 1;
+    fn get_era(config: &DigestConfig, latest_interval: u64, interval: u64) -> EraType {
+        let hot_min = latest_interval - u64::try_from(config.hot).unwrap() + 1;
         let warm_min =
-            latest_interval - u64::try_from(HOT).unwrap() - u64::try_from(WARM).unwrap() + 1;
+            latest_interval - u64::try_from(config.hot).unwrap() - u64::try_from(config.warm).unwrap() + 1;
 
         if interval >= hot_min {
             EraType::Hot
@@ -538,6 +551,7 @@ impl Digest {
     }
 
     fn process_log(
+        config: &DigestConfig,
         raw_log: Vec<zenoh::time::Timestamp>,
         latest_interval: u64,
         latest_snapshot_time: Timestamp,
@@ -546,7 +560,7 @@ impl Digest {
 
         for entry_ts in raw_log {
             if entry_ts <= latest_snapshot_time {
-                let (era, interval, subinterval) = Digest::get_bucket(latest_interval, entry_ts);
+                let (era, interval, subinterval) = Digest::get_bucket(&config, latest_interval, entry_ts);
                 log.push(Log {
                     era: era,
                     interval: interval,
@@ -603,6 +617,7 @@ impl Digest {
         }
         Digest {
             timestamp: self.timestamp,
+            config: self.config.clone(),
             checksum: self.checksum,
             eras: compressed_eras,
             intervals: compressed_intervals,

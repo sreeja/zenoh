@@ -42,30 +42,33 @@ use zenoh_backend_traits::config::ReplicaConfig;
 pub mod digest;
 pub use digest::*;
 
-const ALIGN_PREFIX: &str = "/@-digest";
-const PUBLICATION_INTERVAL: Duration = Duration::from_secs(5);
+// const ALIGN_PREFIX: &str = "/@-digest";
+// const PUBLICATION_INTERVAL: Duration = Duration::from_secs(5);
 
 pub enum StorageMessage {
     Stop,
     GetStatus(async_std::channel::Sender<serde_json::Value>),
 }
 
-pub struct Replica {
-    name: String,          // name of replica  -- UUID(zenoh)-<storage_type>-<storage_name>
-    session: Arc<Session>, // zenoh session used by the replica
-    replicate: bool, // if true, replicate, else a normal storage
-    key_expr: String,      // key expression of the storage to be functioning as a replica
-    digest_key: String,    // key expression on which digest is published/subscribed
+struct Replication {
     stable_log: RwLock<HashMap<String, Timestamp>>, // log entries until the snapshot time
     volatile_log: RwLock<HashMap<String, Timestamp>>, // log entries after the snapshot time
-    storage: Mutex<Box<dyn zenoh_backend_traits::Storage>>, // -- the actual value being stored
-    in_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
-    out_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
     digests_published: RwLock<HashSet<u64>>, // checksum of all digests generated and published by this replica
     digests_processed: RwLock<HashSet<u64>>, // checksum of all digests received by the replica
     last_snapshot_time: RwLock<Timestamp>,   // the latest snapshot time
     last_interval: RwLock<u64>,              // the latest interval
     digest: RwLock<Option<Digest>>,          // the current stable digest
+}
+
+pub struct Replica {
+    name: String,          // name of replica  -- UUID(zenoh)-<storage_type>-<storage_name>
+    session: Arc<Session>, // zenoh session used by the replica
+    key_expr: String,      // key expression of the storage to be functioning as a replica
+    storage: Mutex<Box<dyn zenoh_backend_traits::Storage>>, // -- the actual value being stored
+    in_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
+    out_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
+    replica_config: Option<ReplicaConfig>, // replica configuration - if some, replica, if none, normal storage
+    replication: Option<Replication>,
 }
 
 // functions to start services required by a replica
@@ -79,88 +82,90 @@ impl Replica {
         key_expr: &str,
         admin_key: &str,
         log: HashMap<String, Timestamp>,
-    ) -> Replica {
-
-        // TODO: use config to decide whether to replicate or not and if replicating, the configuration to be set in replica and digest
-        let replicate = if config.is_some() {
-            true
-        } else {
-            false
-        };
-        info!("[REPLICA]Opening session...");
-
-        let (interval, time) = Replica::get_latest_snapshot_interval_time();
-
+    ) -> ZResult<Sender<StorageMessage>> {
         // Ex: /@/router/390CEC11A1E34977A1C609A35BC015E6/status/plugins/storages/backends/memory/storages/demo1 -> 390CEC11A1E34977A1C609A35BC015E6-memory-demo1
+        // TODO: change this to 390CEC11A1E34977A1C609A35BC015E6/memory/demo1 when optimizing key expression
         let parts: Vec<&str> = admin_key.split("/").collect();
         let uuid = parts[3];
         let storage_type = parts[8];
         let storage_name = parts[10];
         let name = format!("{}-{}-{}", uuid, storage_type, storage_name);
 
-        let digest_key = if key_expr.ends_with("**") {
-            format!("{}{}", ALIGN_PREFIX, key_expr.strip_suffix("**").unwrap())
+        if config.is_some() { 
+            // TODO: the configuration to be set in replica and digest
+            info!("[REPLICA]Opening session...");
+
+            let (interval, time) = Replica::get_latest_snapshot_interval_time(config.as_ref().unwrap().propagation_delay, config.as_ref().unwrap().delta);
+
+            let replica = Replica {
+                name: name,
+                session: session,
+                key_expr: key_expr.to_string(),
+                storage: Mutex::new(storage),
+                in_interceptor: in_interceptor,
+                out_interceptor: out_interceptor,
+                replica_config: config,
+                replication: Some(Replication {
+                    stable_log: RwLock::new(HashMap::<String, Timestamp>::new()),
+                    volatile_log: RwLock::new(HashMap::<String, Timestamp>::new()),
+                    digests_published: RwLock::new(HashSet::<u64>::new()),
+                    digests_processed: RwLock::new(HashSet::<u64>::new()),
+                    last_snapshot_time: RwLock::new(time),
+                    last_interval: RwLock::new(interval),
+                    digest: RwLock::new(None),        
+                }),
+            };
+
+            replica.initialize_log(log).await;
+            replica.initialize_digest().await;
+
+            // channel to queue digests to be aligned
+            let (tx_digest, rx_digest) = flume::unbounded();
+            // digest sub
+            let digest_sub = replica.start_digest_sub(tx_digest);
+            // eval for align
+            let align_eval = replica.start_align_eval();
+            // aligner
+            let aligner = replica.start_aligner(rx_digest);
+            // digest pub
+            let digest_pub = replica.start_digest_pub();
+
+            //updating snapshot time
+            let snapshot_task = replica.update_snapshot_task();
+
+            //actual storage
+            let storage_task = replica.start_storage_queryable_subscriber();
+
+            let result = join!(
+                digest_sub,
+                align_eval,
+                aligner,
+                digest_pub,
+                snapshot_task,
+                storage_task,
+            );
+
+            result.5
         } else {
-            format!("{}{}", ALIGN_PREFIX, key_expr)
-        };
+            let replica = Replica {
+                name: name,
+                session: session,
+                key_expr: key_expr.to_string(),
+                storage: Mutex::new(storage),
+                in_interceptor: in_interceptor,
+                out_interceptor: out_interceptor,
+                replica_config: None,
+                replication: None,
+            };
 
-        let replica = Replica {
-            name: name,
-            session: session,
-            key_expr: key_expr.to_string(),
-            digest_key: digest_key,
-            stable_log: RwLock::new(HashMap::<String, Timestamp>::new()),
-            volatile_log: RwLock::new(HashMap::<String, Timestamp>::new()),
-            storage: Mutex::new(storage),
-            in_interceptor: in_interceptor,
-            out_interceptor: out_interceptor,
-            digests_published: RwLock::new(HashSet::<u64>::new()),
-            digests_processed: RwLock::new(HashSet::<u64>::new()),
-            last_snapshot_time: RwLock::new(time),
-            last_interval: RwLock::new(interval),
-            digest: RwLock::new(None),
-        };
-
-        replica.initialize_log(log).await;
-        replica.initialize_digest().await;
-
-        replica
-    }
-
-    pub async fn start_replica(&self) -> ZResult<Sender<StorageMessage>> {
-        // channel to queue digests to be aligned
-        let (tx_digest, rx_digest) = flume::unbounded();
-        // digest sub
-        let digest_sub = self.start_digest_sub(tx_digest);
-        // eval for align
-        let align_eval = self.start_align_eval();
-        // aligner
-        let aligner = self.start_aligner(rx_digest);
-        // digest pub
-        let digest_pub = self.start_digest_pub();
-
-        //updating snapshot time
-        let snapshot_task = self.update_snapshot_task();
-
-        //actual storage
-        let storage_task = self.start_storage_queryable_subscriber();
-
-        let result = join!(
-            digest_sub,
-            align_eval,
-            aligner,
-            digest_pub,
-            snapshot_task,
-            storage_task,
-        );
-
-        result.5
+            replica.start_storage_queryable_subscriber().await
+        }
     }
 
     pub async fn start_digest_sub(&self, tx: Sender<(String, Digest)>) {
         let mut received = HashMap::<String, Timestamp>::new();
 
-        let digest_key = format!("{}**", self.digest_key);
+        let digest_key = format!("{}**", self.get_digest_key());
 
         debug!(
             "[DIGEST_SUB]Creating Subscriber named {} on '{}'...",
@@ -207,7 +212,7 @@ impl Replica {
     }
 
     pub async fn start_digest_pub(&self) {
-        let digest_key = format!("{}{}", self.digest_key, self.name);
+        let digest_key = format!("{}{}", self.get_digest_key(), self.name);
 
         debug!(
             "[DIGEST_PUB]Declaring digest on key expression '{}'...",
@@ -220,14 +225,15 @@ impl Replica {
         self.session.declare_publication(expr_id).await.unwrap();
 
         loop {
-            sleep(PUBLICATION_INTERVAL).await;
+            sleep(self.replica_config.as_ref().unwrap().publication_interval).await;
 
             self.update_stable_log().await;
 
-            let digest = self.digest.read().await;
+            let replication = self.replication.as_ref().unwrap();
+            let digest = replication.digest.read().await;
             let digest = digest.as_ref().unwrap().compress();
             let digest_json = serde_json::to_string(&digest).unwrap();
-            let mut digests_published = self.digests_published.write().await;
+            let mut digests_published = replication.digests_published.write().await;
             digests_published.insert(digest.checksum);
             drop(digests_published);
             drop(digest);
@@ -241,7 +247,7 @@ impl Replica {
     }
 
     pub async fn start_align_eval(&self) {
-        let digest_key = format!("{}{}/**", self.digest_key, self.name);
+        let digest_key = format!("{}{}/**", self.get_digest_key(), self.name);
 
         debug!("[ALIGN_EVAL]Creating Queryable on '{}'...", digest_key);
         let mut queryable = self
@@ -291,10 +297,11 @@ impl Replica {
     pub async fn update_snapshot_task(&self) {
         sleep(Duration::from_secs(2)).await;
         loop {
-            sleep(DELTA).await;
-            let mut last_snapshot_time = self.last_snapshot_time.write().await;
-            let mut last_interval = self.last_interval.write().await;
-            let (interval, time) = Replica::get_latest_snapshot_interval_time();
+            sleep(self.replica_config.as_ref().unwrap().delta).await;
+            let replication = self.replication.as_ref().unwrap();
+            let mut last_snapshot_time = replication.last_snapshot_time.write().await;
+            let mut last_interval = replication.last_interval.write().await;
+            let (interval, time) = Replica::get_latest_snapshot_interval_time(self.replica_config.as_ref().unwrap().propagation_delay, self.replica_config.as_ref().unwrap().delta);
             *last_interval = interval;
             *last_snapshot_time = time;
             drop(last_interval);
@@ -419,7 +426,8 @@ impl Replica {
     }
 
     async fn in_processed(&self, checksum: u64) -> bool {
-        let processed_set = self.digests_processed.read().await;
+        let replication = self.replication.as_ref().unwrap();
+        let processed_set = replication.digests_processed.read().await;
         let processed = processed_set.contains(&checksum);
         drop(processed_set);
         if processed {
@@ -429,15 +437,26 @@ impl Replica {
             false
         }
     }
+
+    fn get_digest_key(&self) -> String {
+        let key_expr = self.key_expr.clone();
+        let align_prefix = self.replica_config.as_ref().unwrap().align_prefix.to_string();
+        if key_expr.ends_with("**") {
+            format!("{}{}", align_prefix, key_expr.strip_suffix("**").unwrap())
+        } else {
+            format!("{}{}", align_prefix, key_expr)
+        }
+    }
 }
 
 // maintain log and digest
 impl Replica {
     async fn initialize_log(&self, log: HashMap<String, Timestamp>) {
-        let last_snapshot_time = self.last_snapshot_time.read().await;
+        let replication = self.replication.as_ref().unwrap();
+        let last_snapshot_time = replication.last_snapshot_time.read().await;
 
-        let mut stable_log = self.stable_log.write().await;
-        let mut volatile_log = self.volatile_log.write().await;
+        let mut stable_log = replication.stable_log.write().await;
+        let mut volatile_log = replication.volatile_log.write().await;
         for (k, ts) in log {
             // depending on the associated timestamp, either to stable_log or volatile log
             // entries until last_snapshot_time goes to stable
@@ -457,11 +476,19 @@ impl Replica {
 
     async fn initialize_digest(&self) {
         let now = zenoh::time::new_reception_timestamp();
-        let log_locked = self.stable_log.read().await;
-        let latest_interval = self.last_interval.read().await;
-        let latest_snapshot_time = self.last_snapshot_time.read().await;
+        let replication = self.replication.as_ref().unwrap();
+        let log_locked = replication.stable_log.read().await;
+        let latest_interval = replication.last_interval.read().await;
+        let latest_snapshot_time = replication.last_snapshot_time.read().await;
         let digest = Digest::create_digest(
             now.into(),
+            DigestConfig {
+                propagation_delay: self.replica_config.as_ref().unwrap().propagation_delay,
+                delta: self.replica_config.as_ref().unwrap().delta,
+                sub_intervals: self.replica_config.as_ref().unwrap().subintervals,
+                hot: self.replica_config.as_ref().unwrap().hot,
+                warm: self.replica_config.as_ref().unwrap().warm,
+            },
             (*log_locked).values().map(|ts| *ts).collect(),
             *latest_interval,
             *latest_snapshot_time,
@@ -469,22 +496,23 @@ impl Replica {
         drop(latest_interval);
         drop(latest_snapshot_time);
 
-        let mut digest_lock = self.digest.write().await;
+        let mut digest_lock = replication.digest.write().await;
         *digest_lock = Some(digest);
         drop(digest_lock);
     }
 
     async fn update_log(&self, key: String, ts: Timestamp) {
-        let last_snapshot_time = self.last_snapshot_time.read().await;
-        let last_interval = self.last_interval.read().await;
+        let replication = self.replication.as_ref().unwrap();
+        let last_snapshot_time = replication.last_snapshot_time.read().await;
+        let last_interval = replication.last_interval.read().await;
         let mut redundant_content = HashSet::new();
         let mut new_stable_content = HashSet::new();
         if ts > *last_snapshot_time {
-            let mut log = self.volatile_log.write().await;
+            let mut log = replication.volatile_log.write().await;
             (*log).insert(key, ts);
             drop(log);
         } else {
-            let mut log = self.stable_log.write().await;
+            let mut log = replication.stable_log.write().await;
             let redundant = (*log).insert(key, ts);
             if redundant.is_some() {
                 redundant_content.insert(redundant.unwrap());
@@ -492,7 +520,7 @@ impl Replica {
             drop(log);
             new_stable_content.insert(ts);
         }
-        let mut digest = self.digest.write().await;
+        let mut digest = replication.digest.write().await;
         let updated_digest = Digest::update_digest(
             digest.as_ref().unwrap().clone(),
             *last_interval,
@@ -505,10 +533,11 @@ impl Replica {
     }
 
     async fn update_stable_log(&self) {
-        let last_snapshot_time = self.last_snapshot_time.read().await;
-        let last_interval = self.last_interval.read().await;
-        let volatile = self.volatile_log.read().await;
-        let mut stable = self.stable_log.write().await;
+        let replication = self.replication.as_ref().unwrap();
+        let last_snapshot_time = replication.last_snapshot_time.read().await;
+        let last_interval = replication.last_interval.read().await;
+        let volatile = replication.volatile_log.read().await;
+        let mut stable = replication.stable_log.write().await;
         let mut still_volatile = HashMap::new();
         let mut new_stable = HashSet::new();
         let mut redundant_stable = HashSet::new();
@@ -526,11 +555,11 @@ impl Replica {
         drop(stable);
         drop(volatile);
 
-        let mut volatile = self.volatile_log.write().await;
+        let mut volatile = replication.volatile_log.write().await;
         *volatile = still_volatile;
         drop(volatile);
 
-        let mut digest = self.digest.write().await;
+        let mut digest = replication.digest.write().await;
         let updated_digest = Digest::update_digest(
             digest.as_ref().unwrap().clone(),
             *last_interval,
@@ -540,19 +569,22 @@ impl Replica {
         )
         .await;
         *digest = Some(updated_digest);
+
+        self.flush().await;
     }
 
     async fn flush(&self) {
         let log_filename = format!("{}_log.json", self.name.replace("/", "-"));
         let mut log_file = fs::File::create(log_filename).unwrap();
 
-        let log = self.stable_log.read().await;
+        let replication = self.replication.as_ref().unwrap();
+        let log = replication.stable_log.read().await;
         let l = serde_json::to_string(&(*log)).unwrap();
         log_file.write_all(l.as_bytes()).unwrap();
         drop(log);
     }
 
-    fn get_latest_snapshot_interval_time() -> (u64, Timestamp) {
+    fn get_latest_snapshot_interval_time(propagation_delay: Duration, delta: Duration) -> (u64, Timestamp) {
         let now = zenoh::time::new_reception_timestamp();
         let latest_interval = (now
             .get_time()
@@ -560,11 +592,11 @@ impl Replica {
             .duration_since(EPOCH_START)
             .unwrap()
             .as_millis()
-            - PROPAGATION_DELAY.as_millis())
-            / DELTA.as_millis();
+            - propagation_delay.as_millis())
+            / delta.as_millis();
         let latest_snapshot_time = zenoh::time::Timestamp::new(
             zenoh::time::NTP64::from(Duration::from_millis(
-                u64::try_from(DELTA.as_millis() * latest_interval).unwrap(),
+                u64::try_from(delta.as_millis() * latest_interval).unwrap(),
             )),
             *now.get_id(),
         );
@@ -609,12 +641,14 @@ impl Replica {
 
         for (key, (ts, value)) in missing_data {
             let sample = Sample::new(key, value).with_timestamp(ts);
+            debug!("[****************************] Aligning sample is {:?}", sample);
             self.process_sample(sample).await;
         }
 
         self.flush().await;
 
-        let mut processed = self.digests_processed.write().await;
+        let replication = self.replication.as_ref().unwrap();
+        let mut processed = replication.digests_processed.write().await;
         (*processed).insert(checksum);
         drop(processed);
     }
@@ -629,7 +663,7 @@ impl Replica {
         for content in missing_content {
             let selector = format!(
                 "{}{}/{}/*/*/*/{}",
-                self.digest_key,
+                self.get_digest_key(),
                 from.to_string(),
                 timestamp,
                 content
@@ -645,7 +679,8 @@ impl Replica {
 
     async fn get_missing_content(&self, other: Digest, from: &String) -> Vec<Timestamp> {
         // get my digest
-        let digest = self.digest.read().await;
+        let replication = self.replication.as_ref().unwrap();
+        let digest = replication.digest.read().await;
         let this = digest.as_ref().unwrap();
 
         // get first level diff of digest wrt other - subintervals, of HOT, intervals of WARM and COLD if misaligned
@@ -687,7 +722,7 @@ impl Replica {
     ) -> Vec<Timestamp> {
         let selector = format!(
             "{}{}/{}/cold/*",
-            self.digest_key,
+            self.get_digest_key(),
             other_rep.to_string(),
             timestamp
         );
@@ -706,7 +741,7 @@ impl Replica {
             // get subintervals for mismatching intervals from other_rep
             let selector = format!(
                 "{}{}/{}/*/{}",
-                self.digest_key,
+                self.get_digest_key(),
                 other_rep.to_string(),
                 timestamp,
                 each_int
@@ -731,7 +766,7 @@ impl Replica {
             //get content for mismatching intervals from other_rep
             let selector = format!(
                 "{}{}/{}/*/*/{}",
-                self.digest_key,
+                self.get_digest_key(),
                 other_rep.to_string(),
                 timestamp,
                 each_sub
@@ -789,7 +824,7 @@ impl Replica {
             // get subintervals for mismatching intervals from other_rep
             let selector = format!(
                 "{}{}/{}/*/{}",
-                self.digest_key,
+                self.get_digest_key(),
                 other_rep.to_string(),
                 other.timestamp,
                 each_int
@@ -808,7 +843,7 @@ impl Replica {
             //get content for mismatching intervals from other_rep
             let selector = format!(
                 "{}{}/{}/*/*/{}",
-                self.digest_key,
+                self.get_digest_key(),
                 other_rep.to_string(),
                 other.timestamp,
                 each_sub
@@ -847,7 +882,7 @@ impl Replica {
             //get content for mismatching intervals from other_rep
             let selector = format!(
                 "{}{}/{}/*/*/{}",
-                self.digest_key,
+                self.get_digest_key(),
                 other_rep.to_string(),
                 other.timestamp,
                 each_sub
@@ -877,7 +912,7 @@ impl Replica {
         Option<Timestamp>,
     ) {
         // filter out the redundant part => /<digest_key><name>/
-        let filtering_out_len = self.digest_key.len() + self.name.len() + 1;
+        let filtering_out_len = self.get_digest_key().len() + self.name.len() + 1;
         let (_, selector) = selector.split_at(filtering_out_len);
         let parts: Vec<&str> = selector.split("/").collect();
         // println!("[PARSING>>>>] {:?}", parts);
@@ -973,7 +1008,8 @@ impl Replica {
         // get corresponding key from log
         // let mut key: Option<String> = None;
         let mut key = None;
-        let log = self.stable_log.read().await;
+        let replication = self.replication.as_ref().unwrap();
+        let log = replication.stable_log.read().await;
         for (k, ts) in &*log {
             if ts.clone() == timestamp {
                 key = Some(k.to_string());
@@ -989,9 +1025,15 @@ impl Replica {
                 //     reply.data.key_expr.as_str(),
                 //     String::from_utf8_lossy(&reply.data.value.payload.contiguous())
                 // )
-                if reply.data.timestamp.is_some() {
-                    if reply.data.timestamp.unwrap() == timestamp {
-                        return Some(reply.data);
+                if reply.sample.timestamp.is_some() {
+                    if reply.sample.timestamp.unwrap() > timestamp {
+                    // data must have been already overridden
+                    return None;
+                    } else if reply.sample.timestamp.unwrap() < timestamp {
+                        error!("Data in the storage is older than requested.");
+                        return None;
+                    } else {
+                        return Some(reply.sample);
                     }
                 }
             }
@@ -1029,19 +1071,22 @@ impl Replica {
     }
 
     async fn get_intervals(&self, era: EraType) -> HashMap<u64, u64> {
-        let digest = self.digest.read().await;
+        let replication = self.replication.as_ref().unwrap();
+        let digest = replication.digest.read().await;
         digest.as_ref().unwrap().get_era_content(era)
     }
 
     async fn get_subintervals(&self, interval: u64) -> HashMap<u64, u64> {
-        let digest = self.digest.read().await;
+        let replication = self.replication.as_ref().unwrap();
+        let digest = replication.digest.read().await;
         let mut intervals = HashSet::new();
         intervals.insert(interval);
         digest.as_ref().unwrap().get_interval_content(intervals)
     }
 
     async fn get_content(&self, subinterval: u64) -> HashMap<u64, Vec<zenoh::time::Timestamp>> {
-        let digest = self.digest.read().await;
+        let replication = self.replication.as_ref().unwrap();
+        let digest = replication.digest.read().await;
         let mut subintervals = HashSet::new();
         subintervals.insert(subinterval);
         digest

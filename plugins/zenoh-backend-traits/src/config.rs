@@ -25,7 +25,7 @@ pub struct VolumeConfig {
     #[as_mut]
     pub rest: Map<String, Value>,
 }
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, AsMut, AsRef)]
 pub struct StorageConfig {
     pub name: String,
     pub key_expr: String,
@@ -40,13 +40,13 @@ pub struct StorageConfig {
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReplicaConfig {
-    align_prefix: String,
-    publication_interval: std::time::Duration,
-    propagation_delay: std::time::Duration,
-    delta: std::time::Duration,
-    subintervals: usize,
-    hot: usize,
-    warm: usize,
+    pub align_prefix: String,
+    pub publication_interval: std::time::Duration,
+    pub propagation_delay: std::time::Duration,
+    pub delta: std::time::Duration,
+    pub subintervals: usize,
+    pub hot: usize,
+    pub warm: usize,
 }
 #[derive(Debug)]
 pub enum ConfigDiff {
@@ -325,13 +325,13 @@ impl StorageConfig {
                 let align_prefix = match s.get("align_prefix") {
                     Some(Value::String(p)) => p.clone(), 
                     None => String::from("/@-digest"),
-                    _ => bail!("`align_prefix` in `replica_config` in `storage` field of `{}`'s `{}` backend configuration must be an integer", plugin_name, backend_name)
+                    _ => bail!("`align_prefix` in `replica_config` of storage `{}` must be an integer", storage_name)
                 };
                 let publication_interval = match s.get("publication_interval") {
                     Some(p) => {
                         let p = p.to_string().parse::<u64>();
                         if p.is_err() {
-                            bail!("`publication_interval` in `replica_config` in `storage` field of `{}`'s `{}` backend configuration must be an integer", plugin_name, backend_name)
+                            bail!("`publication_interval` in `replica_config` of storage `{}` must be an integer", storage_name)
                         } else {
                             p.unwrap()
                         }
@@ -342,7 +342,7 @@ impl StorageConfig {
                     Some(p) => {
                         let p = p.to_string().parse::<u64>();
                         if p.is_err() {
-                            bail!("`propagation_delay` in `replica_config` in `storage` field of `{}`'s `{}` backend configuration must be an integer", plugin_name, backend_name)
+                            bail!("`propagation_delay` in `replica_config` of storage `{}` must be an integer", storage_name)
                         } else {
                             p.unwrap()
                         }
@@ -353,7 +353,7 @@ impl StorageConfig {
                     Some(d) => {
                         let d = d.to_string().parse::<u64>();
                         if d.is_err() {
-                            bail!("`delta` in `replica_config` in `storage` field of `{}`'s `{}` backend configuration must be an integer", plugin_name, backend_name)
+                            bail!("`delta` in `replica_config` of storage `{}` must be an integer", storage_name)
                         } else {
                             d.unwrap()
                         }
@@ -364,7 +364,7 @@ impl StorageConfig {
                     Some(i) => {
                         let i = i.to_string().parse::<usize>();
                         if i.is_err() {
-                            bail!("`subintervals` in `replica_config` in `storage` field of `{}`'s `{}` backend configuration must be an integer", plugin_name, backend_name)
+                            bail!("`subintervals` in `replica_config` of storage `{}` must be an integer", storage_name)
                         } else {
                             i.unwrap()
                         }
@@ -375,7 +375,7 @@ impl StorageConfig {
                     Some(h) => {
                         let h = h.to_string().parse::<usize>();
                         if h.is_err() {
-                            bail!("`hot` in `replica_config` in `storage` field of `{}`'s `{}` backend configuration must be an integer", plugin_name, backend_name)
+                            bail!("`hot` in `replica_config` of storage `{}` must be an integer", storage_name)
                         } else {
                             h.unwrap()
                         }
@@ -386,7 +386,7 @@ impl StorageConfig {
                     Some(w) => {
                         let w = w.to_string().parse::<usize>();
                         if w.is_err() {
-                            bail!("`warm` in `replica_config` in `storage` field of `{}`'s `{}` backend configuration must be an integer", plugin_name, backend_name)
+                            bail!("`warm` in `replica_config` of storage `{}` must be an integer", storage_name)
                         } else {
                             w.unwrap()
                         }
