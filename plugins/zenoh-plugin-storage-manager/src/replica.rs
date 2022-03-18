@@ -664,11 +664,12 @@ impl Replica {
         from: &String,
     ) -> HashMap<KeyExpr<'static>, (Timestamp, Value)> {
         let mut result = HashMap::new();
-        let mut content_string = Vec::new();
-        for content in missing_content {
-            content_string.push(format!("{}", content));
-        }
-        let properties = format!("timestamp={};{}=[{}]", timestamp, CONTENTS, content_string.join(","));
+        // let mut content_string = Vec::new();
+        // for content in missing_content {
+        //     content_string.push(serde_json::to_string(content).unwrap());
+        // }
+        // let properties = format!("timestamp={};{}={}", timestamp, CONTENTS, content_string.join(","));
+        let properties = format!("timestamp={};{}={}", timestamp, CONTENTS, serde_json::to_string(missing_content).unwrap());
         let reply = self.perform_query(from.to_string(), properties.clone()).await;
         // TODO: work on the reply to get k, ts, v
         debug!("***************** reply for missing data with property {} is {:?}", properties, reply);
@@ -920,10 +921,12 @@ impl Replica {
         let contents = if properties.get(CONTENTS).is_none() {
             None
         } else {
-            let mut contents = properties.get(CONTENTS).unwrap().to_string();
-            contents.pop();
-            contents.remove(0);
-            Some(contents.split(",").map(|x| Timestamp::from_str(x).unwrap()).collect::<Vec<Timestamp>>())
+            // let mut contents = properties.get(CONTENTS).unwrap().to_string();
+            // contents.pop();
+            // contents.remove(0);
+            // Some(contents.split(",").map(|x| serde_json::from_str(x).unwrap()).collect::<Vec<Timestamp>>())
+            let contents = serde_json::from_str(properties.get(CONTENTS).unwrap()).unwrap();
+            Some(contents)
         };
         (era, intervals, subintervals, contents)
     }
@@ -980,8 +983,8 @@ impl Replica {
     }
 
     // TODO: replace this and directly read from storage calling storage infra
+    // TODO: query on /keyexpr/key?starttime=ts;stoptime=ts
     async fn get_entry_with_ts(&self, timestamp: Timestamp) -> Option<Sample> {
-        // TODO: query on /keyexpr/key?starttime=ts;stoptime=ts
         // get corresponding key from log
         // let mut key: Option<String> = None;
         let mut key = None;
