@@ -662,7 +662,7 @@ impl Digest {
     pub fn get_era_diff(&self, other: HashMap<EraType, Interval>) -> HashSet<EraType> {
         let mut result = HashSet::new();
         for era in vec![EraType::Hot, EraType::Warm, EraType::Cold] {
-            if other.contains_key(&era) {
+            if other.contains_key(&era) && other.get(&era).unwrap().checksum != 0 {
                 if self.eras.contains_key(&era) {
                     if self.eras.get(&era).unwrap().checksum != other.get(&era).unwrap().checksum {
                         result.insert(era);
