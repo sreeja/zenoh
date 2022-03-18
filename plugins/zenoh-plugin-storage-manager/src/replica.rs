@@ -85,13 +85,13 @@ impl Replica {
         admin_key: &str,
         log: HashMap<String, Timestamp>,
     ) -> ZResult<Sender<StorageMessage>> {
-        // Ex: /@/router/390CEC11A1E34977A1C609A35BC015E6/status/plugins/storages/backends/memory/storages/demo1 -> 390CEC11A1E34977A1C609A35BC015E6-memory-demo1
-        // TODO: change this to 390CEC11A1E34977A1C609A35BC015E6/memory/demo1 when optimizing key expression
+        // Ex: /@/router/390CEC11A1E34977A1C609A35BC015E6/status/plugins/storages/backends/memory/storages/demo1 -> 390CEC11A1E34977A1C609A35BC015E6/memory/demo1
+        // TODO: update this to be in line with new storage config updates. will be 390CEC11A1E34977A1C609A35BC015E6/demo1 (memory needed????)
         let parts: Vec<&str> = admin_key.split("/").collect();
         let uuid = parts[3];
         let storage_type = parts[8];
         let storage_name = parts[10];
-        let name = format!("{}-{}-{}", uuid, storage_type, storage_name);
+        let name = format!("{}/{}/{}", uuid, storage_type, storage_name);
 
         if config.is_some() { 
             info!("[REPLICA]Opening session...");
@@ -177,14 +177,7 @@ impl Replica {
         loop {
             let sample = subscriber.receiver().next().await;
             let sample = sample.unwrap();
-            let from = sample
-                .key_expr
-                .as_str()
-                .split("/")
-                .collect::<Vec<&str>>()
-                .last()
-                .unwrap()
-                .clone();
+            let from = &sample.key_expr.as_str()[self.get_digest_key().len() .. ];
             debug!(
                 "[DIGEST_SUB]>> [Digest Subscriber] From {} Received {} ('{}': '{}')",
                 from,
