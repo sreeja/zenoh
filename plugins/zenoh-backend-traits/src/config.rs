@@ -321,7 +321,7 @@ impl StorageConfig {
             Some(s) => {
                 // TODO: figure out how to parse json automatically with default values
                 let align_prefix = match s.get("align_prefix") {
-                    Some(Value::String(p)) => p.clone(), 
+                    Some(Value::String(p)) => p.clone(),
                     None => String::from("/@-digest"),
                     _ => bail!("Invalid type for field `align_prefix` in `replica_config` of storage `{}`. Only string is accepted.", storage_name)
                 };
@@ -391,16 +391,16 @@ impl StorageConfig {
                     }
                     None => 5,
                 };
-                Some( ReplicaConfig {
+                Some(ReplicaConfig {
                     align_prefix,
                     publication_interval: std::time::Duration::from_secs(publication_interval),
                     propagation_delay: std::time::Duration::from_millis(propagation_delay),
                     delta: std::time::Duration::from_millis(delta),
                     subintervals: subintervals,
                     hot: hot,
-                    warm: warm
+                    warm: warm,
                 })
-            },
+            }
             None => None,
         };
         Ok(StorageConfig {

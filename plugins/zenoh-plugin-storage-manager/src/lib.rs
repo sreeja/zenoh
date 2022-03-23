@@ -230,9 +230,13 @@ impl StorageRuntimeInner {
         let volume = &config.volume_id;
         if let Some(storages) = self.storages.get_mut(volume) {
             if let Some(storage) = storages.get_mut(&config.name) {
-                log::debug!("Closing storage {} from volume {}", config.name, volume);
+                log::debug!(
+                    "Close storage {} from volume {}",
+                    config.name,
+                    config.volume_id
+                );
                 // let _ = async_std::task::block_on(storage.send(StorageMessage::Stop));
-                let _ = storage.send(StorageMessage::Stop);
+                let _ = storage.send(StorageMessage::Stop); // TODO: was previosuly spawning a task. do we need that?
             }
         }
     }

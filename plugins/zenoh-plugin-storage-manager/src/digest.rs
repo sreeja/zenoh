@@ -50,7 +50,7 @@ pub struct Log {
 
 #[derive(Eq, PartialEq, Clone, Debug, Deserialize, Serialize)]
 pub struct Digest {
-    pub timestamp: zenoh::time::Timestamp, 
+    pub timestamp: zenoh::time::Timestamp,
     pub config: DigestConfig,
     pub checksum: u64,
     pub eras: HashMap<EraType, Interval>,
@@ -135,7 +135,8 @@ impl Digest {
         latest_interval: u64,
         latest_snapshot_time: Timestamp,
     ) -> Digest {
-        let processed_log = Digest::process_log(&config, raw_log, latest_interval, latest_snapshot_time);
+        let processed_log =
+            Digest::process_log(&config, raw_log, latest_interval, latest_snapshot_time);
         let (subinterval_content, interval_content, era_content) =
             Digest::populate_content(processed_log);
 
@@ -350,7 +351,8 @@ impl Digest {
         let mut subintervals_to_update = HashSet::new();
 
         for entry in content {
-            let (era, interval, subinterval) = Digest::get_bucket(&current.config, latest_interval, entry);
+            let (era, interval, subinterval) =
+                Digest::get_bucket(&current.config, latest_interval, entry);
             eras_to_update.insert(era.clone());
             intervals_to_update.insert(interval);
             subintervals_to_update.insert(subinterval);
@@ -418,7 +420,8 @@ impl Digest {
         let mut subintervals_to_update = HashSet::new();
 
         for entry in redundant_content {
-            let (era, interval, subinterval) = Digest::get_bucket(&current.config, latest_interval, entry);
+            let (era, interval, subinterval) =
+                Digest::get_bucket(&current.config, latest_interval, entry);
 
             if current.subintervals.contains_key(&subinterval) {
                 current
@@ -519,7 +522,11 @@ impl Digest {
         (current.clone(), eras_to_update)
     }
 
-    fn get_bucket(config: &DigestConfig, latest_interval: u64, ts: Timestamp) -> (EraType, u64, u64) {
+    fn get_bucket(
+        config: &DigestConfig,
+        latest_interval: u64,
+        ts: Timestamp,
+    ) -> (EraType, u64, u64) {
         let ts = u64::try_from(
             ts.get_time()
                 .to_system_time()
@@ -538,8 +545,10 @@ impl Digest {
 
     fn get_era(config: &DigestConfig, latest_interval: u64, interval: u64) -> EraType {
         let hot_min = latest_interval - u64::try_from(config.hot).unwrap() + 1;
-        let warm_min =
-            latest_interval - u64::try_from(config.hot).unwrap() - u64::try_from(config.warm).unwrap() + 1;
+        let warm_min = latest_interval
+            - u64::try_from(config.hot).unwrap()
+            - u64::try_from(config.warm).unwrap()
+            + 1;
 
         if interval >= hot_min {
             EraType::Hot
@@ -560,7 +569,8 @@ impl Digest {
 
         for entry_ts in raw_log {
             if entry_ts <= latest_snapshot_time {
-                let (era, interval, subinterval) = Digest::get_bucket(&config, latest_interval, entry_ts);
+                let (era, interval, subinterval) =
+                    Digest::get_bucket(&config, latest_interval, entry_ts);
                 log.push(Log {
                     era: era,
                     interval: interval,
