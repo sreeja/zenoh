@@ -25,7 +25,7 @@ pub struct VolumeConfig {
     #[as_mut]
     pub rest: Map<String, Value>,
 }
-#[derive(Debug, Clone, PartialEq, AsMut, AsRef)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct StorageConfig {
     pub name: String,
     pub key_expr: String,
@@ -34,8 +34,6 @@ pub struct StorageConfig {
     pub volume_cfg: Value,
     // If replica_config is present, start a replica, else a normal storage
     // TODO: need to distinguish between time-series and key-value
-    #[as_ref]
-    #[as_mut]
     pub replica_config: Option<ReplicaConfig>,
 }
 #[derive(Debug, Clone, PartialEq)]
@@ -325,13 +323,13 @@ impl StorageConfig {
                 let align_prefix = match s.get("align_prefix") {
                     Some(Value::String(p)) => p.clone(), 
                     None => String::from("/@-digest"),
-                    _ => bail!("`align_prefix` in `replica_config` of storage `{}` must be an integer", storage_name)
+                    _ => bail!("Invalid type for field `align_prefix` in `replica_config` of storage `{}`. Only string is accepted.", storage_name)
                 };
                 let publication_interval = match s.get("publication_interval") {
                     Some(p) => {
                         let p = p.to_string().parse::<u64>();
                         if p.is_err() {
-                            bail!("`publication_interval` in `replica_config` of storage `{}` must be an integer", storage_name)
+                            bail!("Invalid type for field `publication_interval` in `replica_config` of storage `{}`. Only integer values are accepted.", storage_name)
                         } else {
                             p.unwrap()
                         }
@@ -342,7 +340,7 @@ impl StorageConfig {
                     Some(p) => {
                         let p = p.to_string().parse::<u64>();
                         if p.is_err() {
-                            bail!("`propagation_delay` in `replica_config` of storage `{}` must be an integer", storage_name)
+                            bail!("Invalid type for field `propagation_delay` in `replica_config` of storage `{}`. Only integer values are accepted.", storage_name)
                         } else {
                             p.unwrap()
                         }
@@ -353,7 +351,7 @@ impl StorageConfig {
                     Some(d) => {
                         let d = d.to_string().parse::<u64>();
                         if d.is_err() {
-                            bail!("`delta` in `replica_config` of storage `{}` must be an integer", storage_name)
+                            bail!("Invalid type for field `delta` in `replica_config` of storage `{}`. Only integer values are accepted.", storage_name)
                         } else {
                             d.unwrap()
                         }
@@ -364,7 +362,7 @@ impl StorageConfig {
                     Some(i) => {
                         let i = i.to_string().parse::<usize>();
                         if i.is_err() {
-                            bail!("`subintervals` in `replica_config` of storage `{}` must be an integer", storage_name)
+                            bail!("Invalid type for field `subintervals` in `replica_config` of storage `{}`. Only integer values are accepted.", storage_name)
                         } else {
                             i.unwrap()
                         }
@@ -375,7 +373,7 @@ impl StorageConfig {
                     Some(h) => {
                         let h = h.to_string().parse::<usize>();
                         if h.is_err() {
-                            bail!("`hot` in `replica_config` of storage `{}` must be an integer", storage_name)
+                            bail!("Invalid type for field `hot` in `replica_config` of storage `{}`. Only integer values are accepted.", storage_name)
                         } else {
                             h.unwrap()
                         }
@@ -386,7 +384,7 @@ impl StorageConfig {
                     Some(w) => {
                         let w = w.to_string().parse::<usize>();
                         if w.is_err() {
-                            bail!("`warm` in `replica_config` of storage `{}` must be an integer", storage_name)
+                            bail!("Invalid type for field `warm` in `replica_config` of storage `{}`. Only integer values are accepted.", storage_name)
                         } else {
                             w.unwrap()
                         }
