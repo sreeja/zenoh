@@ -85,13 +85,12 @@ impl Replica {
         admin_key: &str,
         log: HashMap<String, Timestamp>,
     ) -> ZResult<Sender<StorageMessage>> {
-        // Ex: /@/router/390CEC11A1E34977A1C609A35BC015E6/status/plugins/storages/backends/memory/storages/demo1 -> 390CEC11A1E34977A1C609A35BC015E6/memory/demo1
-        // TODO: update this to be in line with new storage config updates. will be 390CEC11A1E34977A1C609A35BC015E6/demo1 (memory needed????)
+        // Ex: /@/router/43C9AE839B274A259B437F78CC081D6A/status/plugins/storage_manager/storages/demo1 -> 390CEC11A1E34977A1C609A35BC015E6/demo1 (/memory needed????)
         let parts: Vec<&str> = admin_key.split("/").collect();
         let uuid = parts[3];
-        let storage_type = parts[8];
-        let storage_name = parts[10];
-        let name = format!("{}/{}/{}", uuid, storage_type, storage_name);
+        let storage_name = parts[8];
+        // let storage_name = parts[10];
+        let name = format!("{}/{}", uuid, storage_name);
 
         if config.is_some() { 
             info!("[REPLICA]Opening session...");
