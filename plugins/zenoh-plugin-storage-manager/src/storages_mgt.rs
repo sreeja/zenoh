@@ -25,8 +25,8 @@ use zenoh::prelude::*;
 // use zenoh::queryable;
 use zenoh::Session;
 // use zenoh_backend_traits::Query;
-use zenoh_core::Result as ZResult;
 use zenoh_backend_traits::config::ReplicaConfig;
+use zenoh_core::Result as ZResult;
 
 #[path = "replica.rs"]
 pub mod replica;
@@ -47,7 +47,7 @@ pub(crate) async fn start_storage(
     // TODO: start storage + replica: digest_sub, digest_pub, aligner and align_eval
     // TODO: Key-value stores and time-series to be addressed
     // TODO: fix the name; to be read from the configuration file
-    // let replica = 
+    // let replica =
     Replica::initialize_replica(
         config,
         zenoh.clone(),
