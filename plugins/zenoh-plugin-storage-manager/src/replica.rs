@@ -86,7 +86,7 @@ impl Replica {
         log: HashMap<String, Timestamp>,
     ) -> ZResult<Sender<StorageMessage>> {
         // Ex: /@/router/43C9AE839B274A259B437F78CC081D6A/status/plugins/storage_manager/storages/demo1 -> 390CEC11A1E34977A1C609A35BC015E6/demo1 (/memory needed????)
-        let parts: Vec<&str> = admin_key.split("/").collect();
+        let parts: Vec<&str> = admin_key.split('/').collect();
         let uuid = parts[3];
         let storage_name = parts[8];
         // let storage_name = parts[10];
@@ -101,12 +101,12 @@ impl Replica {
             );
 
             let replica = Replica {
-                name: name,
-                session: session,
+                name,
+                session,
                 key_expr: key_expr.to_string(),
                 storage: Mutex::new(storage),
-                in_interceptor: in_interceptor,
-                out_interceptor: out_interceptor,
+                in_interceptor,
+                out_interceptor,
                 replica_config: config,
                 replica_data: Some(ReplicaData {
                     stable_log: RwLock::new(HashMap::<String, Timestamp>::new()),
@@ -151,12 +151,12 @@ impl Replica {
             result.5
         } else {
             let replica = Replica {
-                name: name,
-                session: session,
+                name,
+                session,
                 key_expr: key_expr.to_string(),
                 storage: Mutex::new(storage),
-                in_interceptor: in_interceptor,
-                out_interceptor: out_interceptor,
+                in_interceptor,
+                out_interceptor,
                 replica_config: None,
                 replica_data: None,
             };
@@ -193,7 +193,7 @@ impl Replica {
             let ts = digest.timestamp;
             let to_be_processed = self
                 .processing_needed(
-                    &(from.to_string()),
+                    from,
                     digest.timestamp,
                     digest.checksum,
                     received.clone(),
@@ -407,17 +407,17 @@ impl Replica {
 
     async fn processing_needed(
         &self,
-        from: &String,
+        from: &str,
         ts: Timestamp,
         checksum: u64,
         received: HashMap<String, Timestamp>,
     ) -> bool {
-        if from.to_string() == self.name {
+        if *from == self.name {
             debug!("[DIGEST_SUB]Dropping own digest with checksum {}", checksum);
             return false;
         }
         // TODO: test this part
-        if received.contains_key(from) && received.get(from).unwrap().clone() > ts {
+        if received.contains_key(from) && *received.get(from).unwrap() > ts {
             // not the latest from that replica
             debug!("[DIGEST_SUB]Dropping older digest at {} from {}", ts, from);
             return false;
@@ -452,7 +452,7 @@ impl Replica {
             .to_string();
         if key_expr.ends_with("**") {
             format!("{}{}", align_prefix, key_expr.strip_suffix("**").unwrap())
-        } else if key_expr.ends_with("/") {
+        } else if key_expr.ends_with('/') {
             format!("{}{}", align_prefix, key_expr)
         } else {
             format!("{}{}/", align_prefix, key_expr)
@@ -492,7 +492,7 @@ impl Replica {
         let latest_interval = replica_data.last_interval.read().await;
         let latest_snapshot_time = replica_data.last_snapshot_time.read().await;
         let digest = Digest::create_digest(
-            now.into(),
+            now,
             DigestConfig {
                 propagation_delay: self.replica_config.as_ref().unwrap().propagation_delay,
                 delta: self.replica_config.as_ref().unwrap().delta,
@@ -500,7 +500,7 @@ impl Replica {
                 hot: self.replica_config.as_ref().unwrap().hot,
                 warm: self.replica_config.as_ref().unwrap().warm,
             },
-            (*log_locked).values().map(|ts| *ts).collect(),
+            (*log_locked).values().copied().collect(),
             *latest_interval,
             *latest_snapshot_time,
         );
@@ -585,7 +585,7 @@ impl Replica {
     }
 
     async fn flush(&self) {
-        let log_filename = format!("{}_log.json", self.name.replace("/", "-"));
+        let log_filename = format!("{}_log.json", self.name.replace('/', "-"));
         let mut log_file = fs::File::create(log_filename).unwrap();
 
         let replica_data = self.replica_data.as_ref().unwrap();
@@ -635,34 +635,32 @@ impl Replica {
     //         "/Users/sreeja/work/zenoh-storage-alignment/digest/{}-{}.json",
     //         ts, self.name
     //     )
-    //     // in real zenoh application, use this line instead
-    //     // let filename = format!("{}-{}", timestamp.get_time().to_duration().as_nanos().to_string(), timestamp.get_id());
     // }
 }
 
 // functions to query data as needed for alignment
 impl Replica {
     //identify alignment requirements -> {hot => [subintervals], warm => [intervals], cold => []}
-    async fn process_incoming_digest(&self, other: Digest, from: &String) {
+    async fn process_incoming_digest(&self, other: Digest, from: &str) {
         let checksum = other.checksum;
         let timestamp = other.timestamp;
         let missing_content = self.get_missing_content(other, from).await;
         debug!("[REPLICA] Missing content is {:?}", missing_content);
 
-        if missing_content.len() > 0 {
+        if !missing_content.is_empty() {
             let missing_data = self
                 .get_missing_data(&missing_content, timestamp, from)
                 .await;
 
             debug!(
-                "[****************************] missing data is {:?}",
+                "[REPLICA] Missing data is {:?}",
                 missing_data
             );
 
             for (key, (ts, value)) in missing_data {
                 let sample = Sample::new(key, value).with_timestamp(ts);
                 debug!(
-                    "[****************************] Aligning sample is {:?}",
+                    "[REPLICA] Adding sample {:?}",
                     sample
                 );
                 self.process_sample(sample).await;
@@ -681,16 +679,11 @@ impl Replica {
 
     async fn get_missing_data(
         &self,
-        missing_content: &Vec<Timestamp>,
+        missing_content: &[Timestamp],
         timestamp: Timestamp,
-        from: &String,
+        from: &str,
     ) -> HashMap<KeyExpr<'static>, (Timestamp, Value)> {
         let mut result = HashMap::new();
-        // let mut content_string = Vec::new();
-        // for content in missing_content {
-        //     content_string.push(serde_json::to_string(content).unwrap());
-        // }
-        // let properties = format!("timestamp={};{}={}", timestamp, CONTENTS, content_string.join(","));
         let properties = format!(
             "timestamp={};{}={}",
             timestamp,
@@ -700,12 +693,11 @@ impl Replica {
         let reply = self
             .perform_query(from.to_string(), properties.clone())
             .await;
-        // TODO: work on the reply to get k, ts, v
-        debug!(
-            "***************** reply for missing data with property {} is {:?}",
-            properties, reply
-        );
-        // NOte: reply is an Option<String>
+        // debug!(
+        //     "[ALIGNER] << Reply for missing data with property {} is {:?}",
+        //     properties, reply
+        // );
+        // Note: reply is an Option<String>
         // reply.unwrap() gives json string
         // serde_json::from_str(reply.unwrap()) gives HashMap<key(string), (value (json string), timestamp)>
         // for each entry in this, convert it into result required structure and return
@@ -717,20 +709,10 @@ impl Replica {
                 result.insert(KeyExpr::from(k), (ts, Value::from(v)));
             }
         }
-
-        // if reply_content.is_some() {
-        //     // TODO: this reply content contains the original selector as key, the return timestamp as timestamp and the actual needed (key, (ts, value)) as value
-        //     debug!("hoooooi************************* {:?}", reply_content);
-        //     let (k, (ts, v)): (KeyExpr<'static>, (Timestamp, Value)) = reply_content.unwrap();
-        //     // let reply_content = v.unwrap().as_json();
-        //     debug!("hoooooiiiii************************* {:?}", v.as_json());
-        //     // TODO: v contains actual (k, ts, v), parse it from
-        //     result.insert(k, (ts, v));
-        // }
         result
     }
 
-    async fn get_missing_content(&self, other: Digest, from: &String) -> Vec<Timestamp> {
+    async fn get_missing_content(&self, other: Digest, from: &str) -> Vec<Timestamp> {
         // get my digest
         let replica_data = self.replica_data.as_ref().unwrap();
         let digest = replica_data.digest.read().await;
@@ -742,13 +724,13 @@ impl Replica {
         if mis_eras.contains(&EraType::Cold) {
             // perform cold alignment
             let mut cold_data = self
-                .perform_cold_alignment(this, from.to_string(), other.timestamp.clone())
+                .perform_cold_alignment(this, from.to_string(), other.timestamp)
                 .await;
             missing_content.append(&mut cold_data);
-            debug!(
-                "************** the missing content after cold alignment is {:?}",
-                missing_content
-            );
+            // debug!(
+            //     "************** the missing content after cold alignment is {:?}",
+            //     missing_content
+            // );
         }
         if mis_eras.contains(&EraType::Warm) {
             // perform warm alignment
@@ -756,10 +738,10 @@ impl Replica {
                 .perform_warm_alignment(this, from.to_string(), other.clone())
                 .await;
             missing_content.append(&mut warm_data);
-            debug!(
-                "************** the missing content after warm alignment is {:?}",
-                missing_content
-            );
+            // debug!(
+            //     "************** the missing content after warm alignment is {:?}",
+            //     missing_content
+            // );
         }
         if mis_eras.contains(&EraType::Hot) {
             // perform hot alignment
@@ -767,10 +749,10 @@ impl Replica {
                 .perform_hot_alignment(this, from.to_string(), other)
                 .await;
             missing_content.append(&mut hot_data);
-            debug!(
-                "************** the missing content after hot alignment is {:?}",
-                missing_content
-            );
+            // debug!(
+            //     "************** the missing content after hot alignment is {:?}",
+            //     missing_content
+            // );
         }
         missing_content.into_iter().collect()
     }
@@ -787,11 +769,11 @@ impl Replica {
     ) -> Vec<Timestamp> {
         let properties = format!("timestamp={};{}=cold", timestamp, ERA);
         let reply_content = self.perform_query(other_rep.to_string(), properties).await;
-        let other_intervals =
-            serde_json::from_str(&reply_content.unwrap()).unwrap_or(HashMap::new());
+        let other_intervals : HashMap<u64, u64> =
+            serde_json::from_str(&reply_content.unwrap()).unwrap_or_default();
         // get era diff
         let diff_intervals = this.get_interval_diff(other_intervals.clone());
-        if diff_intervals.len() > 0 {
+        if !diff_intervals.is_empty() {
             let mut diff_string = Vec::new();
             for each_int in diff_intervals {
                 diff_string.push(each_int.to_string());
@@ -804,14 +786,14 @@ impl Replica {
             );
             let reply_content = self.perform_query(other_rep.to_string(), properties).await;
             let other_subintervals =
-                serde_json::from_str(&reply_content.unwrap()).unwrap_or(HashMap::new());
+                serde_json::from_str(&reply_content.unwrap()).unwrap_or_default();
             // get intervals diff
             let diff_subintervals = this.get_subinterval_diff(other_subintervals);
             debug!(
                 "[ALIGNER] The subintervals that need alignment are : {:?}",
                 diff_subintervals
             );
-            if diff_subintervals.len() > 0 {
+            if !diff_subintervals.is_empty() {
                 let mut diff_string = Vec::new();
                 for each_sub in diff_subintervals {
                     diff_string.push(each_sub.to_string());
@@ -824,10 +806,10 @@ impl Replica {
                 );
                 let reply_content = self.perform_query(other_rep.to_string(), properties).await;
                 let other_content =
-                    serde_json::from_str(&reply_content.unwrap()).unwrap_or(HashMap::new());
+                    serde_json::from_str(&reply_content.unwrap()).unwrap_or_default();
                 // get subintervals diff
                 let result = this.get_full_content_diff(other_content);
-                debug!("******************the mis aligned content are {:?}", result);
+                debug!("[ALIGNER] The missing content is {:?}", result);
                 return result;
             }
         }
@@ -838,7 +820,7 @@ impl Replica {
         let selector = format!("{}{}?({})", self.get_digest_key(), from, properties);
         debug!("[ALIGNER]Sending Query '{}'...", selector);
         let mut replies = self.session.get(&selector).await.unwrap();
-        while let Some(reply) = replies.next().await {
+        if let Some(reply) = replies.next().await {
             debug!(
                 "[ALIGNER]>> Received ('{}': '{}')",
                 reply.sample.key_expr.as_str(),
@@ -866,9 +848,8 @@ impl Replica {
         // get era diff
         let diff_intervals = this.get_interval_diff(other_intervals);
 
-        // let mut diff_subintervals = HashSet::new();
-        // TODO: properties = timestamp=xxx,intervals=[www,ee,rr]
-        if diff_intervals.len() > 0 {
+        // properties = timestamp=xxx,intervals=[www,ee,rr]
+        if !diff_intervals.is_empty() {
             let mut diff_string = Vec::new();
             for each_int in diff_intervals {
                 diff_string.push(each_int.to_string());
@@ -881,12 +862,12 @@ impl Replica {
             );
             let reply_content = self.perform_query(other_rep.to_string(), properties).await;
             let other_subintervals =
-                serde_json::from_str(&reply_content.unwrap()).unwrap_or(HashMap::new());
+                serde_json::from_str(&reply_content.unwrap()).unwrap_or_default();
             // get intervals diff
             let diff_subintervals = this.get_subinterval_diff(other_subintervals);
-            if diff_subintervals.len() > 0 {
+            if !diff_subintervals.is_empty() {
                 let mut diff_string = Vec::new();
-                // TODO: properties = timestamp=xxx,subintervals=[www,ee,rr]
+                // properties = timestamp=xxx,subintervals=[www,ee,rr]
                 for each_sub in diff_subintervals {
                     diff_string.push(each_sub.to_string());
                 }
@@ -898,7 +879,7 @@ impl Replica {
                 );
                 let reply_content = self.perform_query(other_rep.to_string(), properties).await;
                 let other_content =
-                    serde_json::from_str(&reply_content.unwrap()).unwrap_or(HashMap::new());
+                    serde_json::from_str(&reply_content.unwrap()).unwrap_or_default();
                 // get subintervals diff
                 return this.get_full_content_diff(other_content);
             }
@@ -924,9 +905,9 @@ impl Replica {
         // get intervals diff
         let diff_subintervals = this.get_subinterval_diff(other_subintervals);
 
-        if diff_subintervals.len() > 0 {
+        if !diff_subintervals.is_empty() {
             let mut diff_string = Vec::new();
-            // TODO: properties = timestamp=xxx,subintervals=[www,ee,rr]
+            // properties = timestamp=xxx,subintervals=[www,ee,rr]
             for each_sub in diff_subintervals {
                 diff_string.push(each_sub.to_string());
             }
@@ -938,7 +919,7 @@ impl Replica {
             );
             let reply_content = self.perform_query(other_rep.to_string(), properties).await;
             let other_content =
-                serde_json::from_str(&reply_content.unwrap()).unwrap_or(HashMap::new());
+                serde_json::from_str(&reply_content.unwrap()).unwrap_or_default();
             // get subintervals diff
             return this.get_full_content_diff(other_content);
         }
@@ -959,8 +940,7 @@ impl Replica {
         Option<Vec<Timestamp>>,
     ) {
         let properties = selector.parse_value_selector().unwrap().properties; // note: this is a hashmap
-        debug!("properties are ************** : {:?}", properties);
-        // let timestamp = Timestamp::from_str(properties.get("timestamp").unwrap()).unwrap();
+        debug!("[ALIGN QUERYABLE] Properties are ************** : {:?}", properties);
         let era = if properties.get(ERA).is_none() {
             None
         } else {
@@ -974,7 +954,7 @@ impl Replica {
             intervals.pop();
             Some(
                 intervals
-                    .split(",")
+                    .split(',')
                     .map(|x| x.parse::<u64>().unwrap())
                     .collect::<Vec<u64>>(),
             )
@@ -987,7 +967,7 @@ impl Replica {
             subintervals.pop();
             Some(
                 subintervals
-                    .split(",")
+                    .split(',')
                     .map(|x| x.parse::<u64>().unwrap())
                     .collect::<Vec<u64>>(),
             )
@@ -995,10 +975,6 @@ impl Replica {
         let contents = if properties.get(CONTENTS).is_none() {
             None
         } else {
-            // let mut contents = properties.get(CONTENTS).unwrap().to_string();
-            // contents.pop();
-            // contents.remove(0);
-            // Some(contents.split(",").map(|x| serde_json::from_str(x).unwrap()).collect::<Vec<Timestamp>>())
             let contents = serde_json::from_str(properties.get(CONTENTS).unwrap()).unwrap();
             Some(contents)
         };
@@ -1014,17 +990,17 @@ impl Replica {
         contents: Option<Vec<Timestamp>>,
     ) -> Option<String> {
         // TODO: timestamp is useless????
-        debug!("***********************asking value");
+        // debug!("***********************asking value");
         if era.is_some() {
-            debug!("*************asking for era content");
+            // debug!("*************asking for era content");
             let intervals = self.get_intervals(era.unwrap()).await;
             return Some(serde_json::to_string(&intervals).unwrap());
         }
         if intervals.is_some() {
-            debug!(
-                "*************asking for intervals {:?}",
-                intervals.as_ref().unwrap()
-            );
+            // debug!(
+            //     "*************asking for intervals {:?}",
+            //     intervals.as_ref().unwrap()
+            // );
             let mut subintervals = HashMap::new();
             for each in intervals.unwrap() {
                 subintervals.extend(self.get_subintervals(each).await);
@@ -1033,10 +1009,10 @@ impl Replica {
         }
 
         if subintervals.is_some() {
-            debug!(
-                "*************asking for subintervals {:?}",
-                subintervals.as_ref().unwrap()
-            );
+            // debug!(
+            //     "*************asking for subintervals {:?}",
+            //     subintervals.as_ref().unwrap()
+            // );
             let mut content = HashMap::new();
             for each in subintervals.unwrap() {
                 content.extend(self.get_content(each).await);
@@ -1045,18 +1021,18 @@ impl Replica {
         }
 
         if contents.is_some() {
-            debug!(
-                "*************asking for content {:?}",
-                contents.as_ref().unwrap()
-            );
+            // debug!(
+            //     "*************asking for content {:?}",
+            //     contents.as_ref().unwrap()
+            // );
             //  TODO: club into a single query to DB
             let mut result = HashMap::new();
             for each in contents.unwrap() {
                 let entry = self.get_entry_with_ts(each).await;
-                debug!(
-                    "*********************** entry for content {} is {:?}",
-                    each, entry
-                );
+                // debug!(
+                //     "*********************** entry for content {} is {:?}",
+                //     each, entry
+                // );
                 if entry.is_some() {
                     let entry = entry.unwrap();
                     result.insert(
@@ -1079,11 +1055,11 @@ impl Replica {
         let mut key = None;
         let replica_data = self.replica_data.as_ref().unwrap();
         let log = replica_data.stable_log.read().await;
-        debug!("**************** log is {:?}", *log);
+        // debug!("**************** log is {:?}", *log);
         for (k, ts) in &*log {
-            debug!("************** searching for {} in log", timestamp);
-            if ts.clone() == timestamp {
-                debug!("**************** got corresponding key {} ", k);
+            // debug!("************** searching for {} in log", timestamp);
+            if *ts == timestamp {
+                // debug!("**************** got corresponding key {} ", k);
                 key = Some(k.to_string());
             }
         }

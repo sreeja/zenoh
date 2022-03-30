@@ -328,10 +328,10 @@ impl StorageConfig {
                 let publication_interval = match s.get("publication_interval") {
                     Some(p) => {
                         let p = p.to_string().parse::<u64>();
-                        if p.is_err() {
-                            bail!("Invalid type for field `publication_interval` in `replica_config` of storage `{}`. Only integer values are accepted.", storage_name)
+                        if let Ok(p) = p {
+                            p
                         } else {
-                            p.unwrap()
+                            bail!("Invalid type for field `publication_interval` in `replica_config` of storage `{}`. Only integer values are accepted.", plugin_name)
                         }
                     }
                     None => 5,
@@ -339,10 +339,10 @@ impl StorageConfig {
                 let propagation_delay = match s.get("propagation_delay") {
                     Some(p) => {
                         let p = p.to_string().parse::<u64>();
-                        if p.is_err() {
-                            bail!("Invalid type for field `propagation_delay` in `replica_config` of storage `{}`. Only integer values are accepted.", storage_name)
+                        if let Ok(p) = p {
+                            p
                         } else {
-                            p.unwrap()
+                            bail!("Invalid type for field `propagation_delay` in `replica_config` of storage `{}`. Only integer values are accepted.", plugin_name)
                         }
                     }
                     None => 200,
@@ -350,10 +350,10 @@ impl StorageConfig {
                 let delta = match s.get("delta") {
                     Some(d) => {
                         let d = d.to_string().parse::<u64>();
-                        if d.is_err() {
-                            bail!("Invalid type for field `delta` in `replica_config` of storage `{}`. Only integer values are accepted.", storage_name)
+                        if let Ok(d) = d {
+                            d
                         } else {
-                            d.unwrap()
+                            bail!("Invalid type for field `delta` in `replica_config` of storage `{}`. Only integer values are accepted.", plugin_name)
                         }
                     }
                     None => 500,
@@ -361,10 +361,10 @@ impl StorageConfig {
                 let subintervals = match s.get("subintervals") {
                     Some(i) => {
                         let i = i.to_string().parse::<usize>();
-                        if i.is_err() {
-                            bail!("Invalid type for field `subintervals` in `replica_config` of storage `{}`. Only integer values are accepted.", storage_name)
+                        if let Ok(i) = i {
+                            i
                         } else {
-                            i.unwrap()
+                            bail!("Invalid type for field `subintervals` in `replica_config` of storage `{}`. Only integer values are accepted.", plugin_name)
                         }
                     }
                     None => 10,
@@ -372,10 +372,10 @@ impl StorageConfig {
                 let hot = match s.get("hot") {
                     Some(h) => {
                         let h = h.to_string().parse::<usize>();
-                        if h.is_err() {
-                            bail!("Invalid type for field `hot` in `replica_config` of storage `{}`. Only integer values are accepted.", storage_name)
+                        if let Ok(h) = h {
+                            h
                         } else {
-                            h.unwrap()
+                            bail!("Invalid type for field `hot` in `replica_config` of storage `{}`. Only integer values are accepted.", plugin_name)
                         }
                     }
                     None => 2,
@@ -383,10 +383,10 @@ impl StorageConfig {
                 let warm = match s.get("warm") {
                     Some(w) => {
                         let w = w.to_string().parse::<usize>();
-                        if w.is_err() {
-                            bail!("Invalid type for field `warm` in `replica_config` of storage `{}`. Only integer values are accepted.", storage_name)
+                        if let Ok(w) = w {
+                            w
                         } else {
-                            w.unwrap()
+                            bail!("Invalid type for field `warm` in `replica_config` of storage `{}`. Only integer values are accepted.", plugin_name)
                         }
                     }
                     None => 5,
@@ -396,9 +396,9 @@ impl StorageConfig {
                     publication_interval: std::time::Duration::from_secs(publication_interval),
                     propagation_delay: std::time::Duration::from_millis(propagation_delay),
                     delta: std::time::Duration::from_millis(delta),
-                    subintervals: subintervals,
-                    hot: hot,
-                    warm: warm,
+                    subintervals,
+                    hot,
+                    warm,
                 })
             }
             None => None,
