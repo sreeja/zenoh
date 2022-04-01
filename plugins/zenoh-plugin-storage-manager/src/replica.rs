@@ -192,12 +192,7 @@ impl Replica {
                     .unwrap();
             let ts = digest.timestamp;
             let to_be_processed = self
-                .processing_needed(
-                    from,
-                    digest.timestamp,
-                    digest.checksum,
-                    received.clone(),
-                )
+                .processing_needed(from, digest.timestamp, digest.checksum, received.clone())
                 .await;
             if to_be_processed {
                 debug!("[DIGEST_SUB] sending {} to aligner", digest.checksum);
@@ -652,17 +647,11 @@ impl Replica {
                 .get_missing_data(&missing_content, timestamp, from)
                 .await;
 
-            debug!(
-                "[REPLICA] Missing data is {:?}",
-                missing_data
-            );
+            debug!("[REPLICA] Missing data is {:?}", missing_data);
 
             for (key, (ts, value)) in missing_data {
                 let sample = Sample::new(key, value).with_timestamp(ts);
-                debug!(
-                    "[REPLICA] Adding sample {:?}",
-                    sample
-                );
+                debug!("[REPLICA] Adding sample {:?}", sample);
                 self.process_sample(sample).await;
             }
 
@@ -769,7 +758,7 @@ impl Replica {
     ) -> Vec<Timestamp> {
         let properties = format!("timestamp={};{}=cold", timestamp, ERA);
         let reply_content = self.perform_query(other_rep.to_string(), properties).await;
-        let other_intervals : HashMap<u64, u64> =
+        let other_intervals: HashMap<u64, u64> =
             serde_json::from_str(&reply_content.unwrap()).unwrap_or_default();
         // get era diff
         let diff_intervals = this.get_interval_diff(other_intervals.clone());
@@ -918,8 +907,7 @@ impl Replica {
                 diff_string.join(",")
             );
             let reply_content = self.perform_query(other_rep.to_string(), properties).await;
-            let other_content =
-                serde_json::from_str(&reply_content.unwrap()).unwrap_or_default();
+            let other_content = serde_json::from_str(&reply_content.unwrap()).unwrap_or_default();
             // get subintervals diff
             return this.get_full_content_diff(other_content);
         }
@@ -940,7 +928,10 @@ impl Replica {
         Option<Vec<Timestamp>>,
     ) {
         let properties = selector.parse_value_selector().unwrap().properties; // note: this is a hashmap
-        debug!("[ALIGN QUERYABLE] Properties are ************** : {:?}", properties);
+        debug!(
+            "[ALIGN QUERYABLE] Properties are ************** : {:?}",
+            properties
+        );
         let era = if properties.get(ERA).is_none() {
             None
         } else {
