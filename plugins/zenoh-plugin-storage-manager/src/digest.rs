@@ -229,12 +229,16 @@ impl Digest {
         let mut interval_content = HashMap::new();
         let mut era_content = HashMap::new();
         for log_entry in processed_log {
-            subinterval_content.entry(log_entry.subinterval).or_insert_with(|| {Vec::new()});
+            subinterval_content
+                .entry(log_entry.subinterval)
+                .or_insert_with(|| Vec::new());
             subinterval_content
                 .get_mut(&log_entry.subinterval)
                 .unwrap()
                 .push(log_entry.content);
-            interval_content.entry(log_entry.interval).or_insert_with(|| {Vec::new()});
+            interval_content
+                .entry(log_entry.interval)
+                .or_insert_with(|| Vec::new());
             interval_content
                 .get_mut(&log_entry.interval)
                 .unwrap()
@@ -276,11 +280,7 @@ impl Digest {
 
         // remove redundant content from proper places
         let (mut current, further_subintervals, further_intervals, further_eras) =
-            Digest::remove_redundant_content(
-                &mut current,
-                redundant_content,
-                latest_interval,
-            );
+            Digest::remove_redundant_content(&mut current, redundant_content, latest_interval);
 
         // move intervals into eras if changed -- iterate through hot and move them to warm/cold if needed, iterate through warm and move them to cold if needed
         let (current, realigned_eras) =
@@ -687,9 +687,7 @@ impl Digest {
         let mut mis_int = HashSet::new();
         for int in other_intervals.keys() {
             if self.intervals.contains_key(int) {
-                if *other_intervals.get(int).unwrap()
-                    != self.intervals.get(int).unwrap().checksum
-                {
+                if *other_intervals.get(int).unwrap() != self.intervals.get(int).unwrap().checksum {
                     mis_int.insert(*int);
                 }
             } else {
