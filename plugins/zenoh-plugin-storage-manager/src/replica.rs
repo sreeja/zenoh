@@ -24,23 +24,27 @@ use std::convert::TryFrom;
 use std::fs;
 use std::io::Write;
 use std::str;
-use std::str::FromStr;
 use std::time::Duration;
 use zenoh::net::protocol::io::SplitBuffer;
 use zenoh::prelude::Sample;
 use zenoh::prelude::*;
 use zenoh::prelude::{KeyExpr, Value};
 use zenoh::queryable;
-use zenoh::queryable::EVAL;
 use zenoh::time::Timestamp;
 use zenoh::Session;
 use zenoh_backend_traits::config::ReplicaConfig;
 use zenoh_backend_traits::Query;
 use zenoh_core::Result as ZResult;
 
-#[path = "digest.rs"]
-pub mod digest;
-pub use digest::*;
+// #[path = "digest.rs"]
+// pub mod digest;
+// pub use digest::*;
+// #[path = "aligner.rs"]
+// pub mod aligner;
+// pub use aligner::*;
+// #[path = "align_eval.rs"]
+pub mod align_eval;
+pub use align_eval::*;
 
 const ERA: &str = "era";
 const INTERVALS: &str = "intervals";
@@ -53,17 +57,17 @@ pub enum StorageMessage {
 }
 
 struct ReplicaData {
-    stable_log: RwLock<HashMap<String, Timestamp>>, // log entries until the snapshot time
+    stable_log: Arc<RwLock<HashMap<String, Timestamp>>>, // log entries until the snapshot time
     volatile_log: RwLock<HashMap<String, Timestamp>>, // log entries after the snapshot time
     digests_published: RwLock<HashSet<u64>>, // checksum of all digests generated and published by this replica
     digests_processed: RwLock<HashSet<u64>>, // checksum of all digests received by the replica
     last_snapshot_time: RwLock<Timestamp>,   // the latest snapshot time
     last_interval: RwLock<u64>,              // the latest interval
-    digest: RwLock<Option<Digest>>,          // the current stable digest
+    digest: Arc<RwLock<Option<Digest>>>,          // the current stable digest
 }
 
 pub struct Replica {
-    name: String,          // name of replica  -- UUID(zenoh)-<storage_type>-<storage_name>
+    name: String,          // name of replica  -- UUID(zenoh)-<storage_name>((-<storage_type>??))
     session: Arc<Session>, // zenoh session used by the replica
     key_expr: String,      // key expression of the storage to be functioning as a replica
     storage: Mutex<Box<dyn zenoh_backend_traits::Storage>>, // -- the actual value being stored
@@ -109,13 +113,13 @@ impl Replica {
                 out_interceptor,
                 replica_config: config,
                 replica_data: Some(ReplicaData {
-                    stable_log: RwLock::new(HashMap::<String, Timestamp>::new()),
+                    stable_log: Arc::new(RwLock::new(HashMap::<String, Timestamp>::new())),
                     volatile_log: RwLock::new(HashMap::<String, Timestamp>::new()),
                     digests_published: RwLock::new(HashSet::<u64>::new()),
                     digests_processed: RwLock::new(HashSet::<u64>::new()),
                     last_snapshot_time: RwLock::new(time),
                     last_interval: RwLock::new(interval),
-                    digest: RwLock::new(None),
+                    digest: Arc::new(RwLock::new(None)),
                 }),
             };
 
@@ -127,7 +131,9 @@ impl Replica {
             // digest sub
             let digest_sub = replica.start_digest_sub(tx_digest);
             // eval for align
-            let align_eval = replica.start_align_eval();
+            let digest_key = replica.get_digest_key();
+            let replica_data = replica.replica_data.as_ref().unwrap();
+            let align_eval = AlignEval::start_align_eval(replica.session.clone(), &digest_key, &replica.name, replica_data.stable_log.clone(), replica_data.digest.clone()); //replica.start_align_eval();
             // aligner
             let aligner = replica.start_aligner(rx_digest);
             // digest pub
@@ -237,39 +243,39 @@ impl Replica {
         }
     }
 
-    pub async fn start_align_eval(&self) {
-        let digest_key = format!("{}{}/**", self.get_digest_key(), self.name);
+    // pub async fn start_align_eval(&self) {
+    //     let digest_key = format!("{}{}/**", self.get_digest_key(), self.name);
 
-        debug!("[ALIGN_EVAL]Creating Queryable on '{}'...", digest_key);
-        let mut queryable = self
-            .session
-            .queryable(&digest_key)
-            .kind(EVAL)
-            .await
-            .unwrap();
+    //     debug!("[ALIGN_EVAL]Creating Queryable on '{}'...", digest_key);
+    //     let mut queryable = self
+    //         .session
+    //         .queryable(&digest_key)
+    //         .kind(EVAL)
+    //         .await
+    //         .unwrap();
 
-        loop {
-            let query = queryable.receiver().next().await;
-            let query = query.unwrap();
-            debug!(
-                "[ALIGN_EVAL]>> [Queryable ] Received Query '{}'",
-                query.selector()
-            );
-            let selector = query.selector().clone();
-            let (era, interval, subinterval, content) = self.parse_selector(selector.clone());
-            debug!("[ALIGN_EVAL] Parsed selector era: {:?}, interval:{:?}, subinterval:{:?}, content:{:?}", era, interval, subinterval, content);
-            let value = self.get_value(era, interval, subinterval, content).await;
-            let value = match value {
-                Some(v) => v,
-                None => String::from(""),
-            };
-            debug!("[ALIGN_EVAL] value for the query is {}", value);
-            query.reply(Sample::new(
-                selector.key_selector.as_str().to_string(),
-                value,
-            ));
-        }
-    }
+    //     loop {
+    //         let query = queryable.receiver().next().await;
+    //         let query = query.unwrap();
+    //         debug!(
+    //             "[ALIGN_EVAL]>> [Queryable ] Received Query '{}'",
+    //             query.selector()
+    //         );
+    //         let selector = query.selector().clone();
+    //         let (era, interval, subinterval, content) = self.parse_selector(selector.clone());
+    //         debug!("[ALIGN_EVAL] Parsed selector era: {:?}, interval:{:?}, subinterval:{:?}, content:{:?}", era, interval, subinterval, content);
+    //         let value = self.get_value(era, interval, subinterval, content).await;
+    //         let value = match value {
+    //             Some(v) => v,
+    //             None => String::from(""),
+    //         };
+    //         debug!("[ALIGN_EVAL] value for the query is {}", value);
+    //         query.reply(Sample::new(
+    //             selector.key_selector.as_str().to_string(),
+    //             value,
+    //         ));
+    //     }
+    // }
 
     pub async fn start_aligner(&self, rx: Receiver<(String, Digest)>) {
         while let Ok((from, incoming_digest)) = rx.recv_async().await {
@@ -915,222 +921,3 @@ impl Replica {
     }
 }
 
-// replying queries
-impl Replica {
-    fn parse_selector(
-        &self,
-        selector: Selector,
-    ) -> (
-        // Timestamp,
-        Option<EraType>,
-        Option<Vec<u64>>,
-        Option<Vec<u64>>,
-        Option<Vec<Timestamp>>,
-    ) {
-        let properties = selector.parse_value_selector().unwrap().properties; // note: this is a hashmap
-        debug!(
-            "[ALIGN QUERYABLE] Properties are ************** : {:?}",
-            properties
-        );
-        let era = if properties.get(ERA).is_none() {
-            None
-        } else {
-            Some(EraType::from_str(properties.get("era").unwrap()).unwrap())
-        };
-        let intervals = if properties.get(INTERVALS).is_none() {
-            None
-        } else {
-            let mut intervals = properties.get(INTERVALS).unwrap().to_string();
-            intervals.remove(0);
-            intervals.pop();
-            Some(
-                intervals
-                    .split(',')
-                    .map(|x| x.parse::<u64>().unwrap())
-                    .collect::<Vec<u64>>(),
-            )
-        };
-        let subintervals = if properties.get(SUBINTERVALS).is_none() {
-            None
-        } else {
-            let mut subintervals = properties.get(SUBINTERVALS).unwrap().to_string();
-            subintervals.remove(0);
-            subintervals.pop();
-            Some(
-                subintervals
-                    .split(',')
-                    .map(|x| x.parse::<u64>().unwrap())
-                    .collect::<Vec<u64>>(),
-            )
-        };
-        let contents = if properties.get(CONTENTS).is_none() {
-            None
-        } else {
-            let contents = serde_json::from_str(properties.get(CONTENTS).unwrap()).unwrap();
-            Some(contents)
-        };
-        (era, intervals, subintervals, contents)
-    }
-
-    async fn get_value(
-        &self,
-        // timestamp: Timestamp,
-        era: Option<EraType>,
-        intervals: Option<Vec<u64>>,
-        subintervals: Option<Vec<u64>>,
-        contents: Option<Vec<Timestamp>>,
-    ) -> Option<String> {
-        // TODO: timestamp is useless????
-        // debug!("***********************asking value");
-        if era.is_some() {
-            // debug!("*************asking for era content");
-            let intervals = self.get_intervals(era.unwrap()).await;
-            return Some(serde_json::to_string(&intervals).unwrap());
-        }
-        if intervals.is_some() {
-            // debug!(
-            //     "*************asking for intervals {:?}",
-            //     intervals.as_ref().unwrap()
-            // );
-            let mut subintervals = HashMap::new();
-            for each in intervals.unwrap() {
-                subintervals.extend(self.get_subintervals(each).await);
-            }
-            return Some(serde_json::to_string(&subintervals).unwrap());
-        }
-
-        if subintervals.is_some() {
-            // debug!(
-            //     "*************asking for subintervals {:?}",
-            //     subintervals.as_ref().unwrap()
-            // );
-            let mut content = HashMap::new();
-            for each in subintervals.unwrap() {
-                content.extend(self.get_content(each).await);
-            }
-            return Some(serde_json::to_string(&content).unwrap());
-        }
-
-        if contents.is_some() {
-            // debug!(
-            //     "*************asking for content {:?}",
-            //     contents.as_ref().unwrap()
-            // );
-            //  TODO: club into a single query to DB
-            let mut result = HashMap::new();
-            for each in contents.unwrap() {
-                let entry = self.get_entry_with_ts(each).await;
-                // debug!(
-                //     "*********************** entry for content {} is {:?}",
-                //     each, entry
-                // );
-                if entry.is_some() {
-                    let entry = entry.unwrap();
-                    result.insert(
-                        entry.key_expr.as_str().to_string(),
-                        (entry.value.as_json().unwrap(), entry.timestamp),
-                    );
-                }
-            }
-            return Some(serde_json::to_string(&result).unwrap());
-        }
-
-        None
-    }
-
-    // TODO: replace this and directly read from storage calling storage infra
-    // TODO: query on /keyexpr/key?starttime=ts;stoptime=ts
-    async fn get_entry_with_ts(&self, timestamp: Timestamp) -> Option<Sample> {
-        // get corresponding key from log
-        // let mut key: Option<String> = None;
-        let mut key = None;
-        let replica_data = self.replica_data.as_ref().unwrap();
-        let log = replica_data.stable_log.read().await;
-        // debug!("**************** log is {:?}", *log);
-        for (k, ts) in &*log {
-            // debug!("************** searching for {} in log", timestamp);
-            if *ts == timestamp {
-                // debug!("**************** got corresponding key {} ", k);
-                key = Some(k.to_string());
-            }
-        }
-        // None
-
-        if key.is_some() {
-            let mut replies = self.session.get(&key.unwrap()).await.unwrap();
-            if let Some(reply) = replies.next().await {
-                // println!(
-                //     ">> Received ('{}': '{}')",
-                //     reply.data.key_expr.as_str(),
-                //     String::from_utf8_lossy(&reply.data.value.payload.contiguous())
-                // )
-                if reply.sample.timestamp.is_some() {
-                    if reply.sample.timestamp.unwrap() > timestamp {
-                    // data must have been already overridden
-                    return None;
-                    } else if reply.sample.timestamp.unwrap() < timestamp {
-                        error!("Data in the storage is older than requested.");
-                        return None;
-                    } else {
-                        return Some(reply.sample);
-                    }
-                }
-            }
-        }
-        None
-        // TODO: query storage for this key, getting value + timestamp.. if timestamp is the same as the requested one, return the key-value pair. If it is older, raise an error and if it is newer, send an empty response since the data is no longer valid.
-
-        // if key.is_none() {
-        //     warn!("Corresponding entry for timestamp {} not found in log, might have been replaced.", timestamp);
-        //     return None;
-        // } else {
-        //     let key = key.unwrap();
-        //     let selector = format!("{}?starttime={};stoptime={}", key, timestamp, timestamp);
-        //     let mut replies = self.session.get(&selector).await.unwrap();
-        //     while let Some(reply) = replies.next().await {
-        //         // println!(
-        //         //     ">> Received ('{}': '{}')",
-        //         //     reply.data.key_expr.as_str(),
-        //         //     String::from_utf8_lossy(&reply.data.value.payload.contiguous())
-        //         // );
-        //         return Some(serde_json::from_str(reply.data).unwrap());
-        //     }
-        //     None
-        // }
-        //
-        // let storage = self.storage.read().await;
-        // for (k, v) in &(*storage) {
-        //     if v.0.to_string() == ts.to_string() {
-        //         //TODO: find a better way to compare
-        //         return serde_json::to_string(&(k.to_string(), (v.0, v.1.clone()))).unwrap();
-        //     }
-        // }
-        // drop(storage);
-        // OVERWRITTEN_DATA.to_string()
-    }
-
-    async fn get_intervals(&self, era: EraType) -> HashMap<u64, u64> {
-        let replica_data = self.replica_data.as_ref().unwrap();
-        let digest = replica_data.digest.read().await;
-        digest.as_ref().unwrap().get_era_content(era)
-    }
-
-    async fn get_subintervals(&self, interval: u64) -> HashMap<u64, u64> {
-        let replica_data = self.replica_data.as_ref().unwrap();
-        let digest = replica_data.digest.read().await;
-        let mut intervals = HashSet::new();
-        intervals.insert(interval);
-        digest.as_ref().unwrap().get_interval_content(intervals)
-    }
-
-    async fn get_content(&self, subinterval: u64) -> HashMap<u64, Vec<zenoh::time::Timestamp>> {
-        let replica_data = self.replica_data.as_ref().unwrap();
-        let digest = replica_data.digest.read().await;
-        let mut subintervals = HashSet::new();
-        subintervals.insert(subinterval);
-        digest
-            .as_ref()
-            .unwrap()
-            .get_subinterval_content(subintervals)
-    }
-}
