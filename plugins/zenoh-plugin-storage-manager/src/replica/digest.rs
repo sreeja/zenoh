@@ -24,7 +24,6 @@ use zenoh::time::Timestamp;
 // use std::fmt;
 
 // define DELTA, EPOCH_START, etc
-pub const EPOCH_START: SystemTime = SystemTime::UNIX_EPOCH;
 // pub const PROPAGATION_DELAY: Duration = Duration::from_millis(200);
 // pub const DELTA: Duration = Duration::from_millis(1000);
 // const SUB_INTERVALS: usize = 10;
@@ -527,7 +526,7 @@ impl Digest {
         let ts = u64::try_from(
             ts.get_time()
                 .to_system_time()
-                .duration_since(EPOCH_START)
+                .duration_since(super::EPOCH_START)
                 .unwrap()
                 .as_millis(),
         )
