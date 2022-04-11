@@ -9,15 +9,16 @@ use zenoh::prelude::*;
 use zenoh::time::Timestamp;
 use zenoh::Session;
 use zenoh::queryable::EVAL;
+use super::Digest;
+use super::digest::*;
+// #[path = "digest.rs"]
+// mod digest;
+// use digest::*;
 
-#[path = "digest.rs"]
-pub mod digest;
-pub use digest::*;
-
-const ERA: &str = "era";
-const INTERVALS: &str = "intervals";
-const SUBINTERVALS: &str = "subintervals";
-const CONTENTS: &str = "contents";
+// const ERA: &str = "era";
+// const INTERVALS: &str = "intervals";
+// const SUBINTERVALS: &str = "subintervals";
+// const CONTENTS: &str = "contents";
 
 pub struct AlignEval {
     session: Arc<Session>,
@@ -153,15 +154,15 @@ impl AlignEval {
             "[ALIGN QUERYABLE] Properties are ************** : {:?}",
             properties
         );
-        let era = if properties.get(ERA).is_none() {
+        let era = if properties.get(super::ERA).is_none() {
             None
         } else {
-            Some(EraType::from_str(properties.get(ERA).unwrap()).unwrap())
+            Some(EraType::from_str(properties.get(super::ERA).unwrap()).unwrap())
         };
-        let intervals = if properties.get(INTERVALS).is_none() {
+        let intervals = if properties.get(super::INTERVALS).is_none() {
             None
         } else {
-            let mut intervals = properties.get(INTERVALS).unwrap().to_string();
+            let mut intervals = properties.get(super::INTERVALS).unwrap().to_string();
             intervals.remove(0);
             intervals.pop();
             Some(
@@ -171,10 +172,10 @@ impl AlignEval {
                     .collect::<Vec<u64>>(),
             )
         };
-        let subintervals = if properties.get(SUBINTERVALS).is_none() {
+        let subintervals = if properties.get(super::SUBINTERVALS).is_none() {
             None
         } else {
-            let mut subintervals = properties.get(SUBINTERVALS).unwrap().to_string();
+            let mut subintervals = properties.get(super::SUBINTERVALS).unwrap().to_string();
             subintervals.remove(0);
             subintervals.pop();
             Some(
@@ -184,10 +185,10 @@ impl AlignEval {
                     .collect::<Vec<u64>>(),
             )
         };
-        let contents = if properties.get(CONTENTS).is_none() {
+        let contents = if properties.get(super::CONTENTS).is_none() {
             None
         } else {
-            let contents = serde_json::from_str(properties.get(CONTENTS).unwrap()).unwrap();
+            let contents = serde_json::from_str(properties.get(super::CONTENTS).unwrap()).unwrap();
             Some(contents)
         };
         (era, intervals, subintervals, contents)

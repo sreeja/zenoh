@@ -28,10 +28,12 @@ use zenoh::Session;
 use zenoh_backend_traits::config::ReplicaConfig;
 use zenoh_core::Result as ZResult;
 
-#[path = "replica.rs"]
-pub mod replica;
-pub(crate) use replica::StorageMessage;
-pub use replica::*;
+pub use super::replica::Replica;
+
+pub enum StorageMessage {
+    Stop,
+    GetStatus(async_std::channel::Sender<serde_json::Value>),
+}
 
 pub(crate) async fn start_storage(
     storage: Box<dyn zenoh_backend_traits::Storage>,
