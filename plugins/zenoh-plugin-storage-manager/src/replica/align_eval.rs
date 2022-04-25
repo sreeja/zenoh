@@ -1,3 +1,19 @@
+//
+// Copyright (c) 2022 ZettaScale Technology
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+// which is available at https://www.apache.org/licenses/LICENSE-2.0.
+//
+// SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+//
+// Contributors:
+//   ZettaScale Zenoh Team, <zenoh@zettascale.tech>
+//
+
+use super::digest::*;
+use super::Digest;
 use async_std::sync::{Arc, RwLock};
 use futures::stream::StreamExt;
 use log::{debug, error};
@@ -6,11 +22,9 @@ use std::str;
 use std::str::FromStr;
 use zenoh::prelude::Sample;
 use zenoh::prelude::*;
+use zenoh::queryable::EVAL;
 use zenoh::time::Timestamp;
 use zenoh::Session;
-use zenoh::queryable::EVAL;
-use super::Digest;
-use super::digest::*;
 // #[path = "digest.rs"]
 // mod digest;
 // use digest::*;
@@ -23,27 +37,34 @@ use super::digest::*;
 pub struct AlignEval {
     session: Arc<Session>,
     digest_key: String,
-    stable_log: Arc<RwLock<HashMap<String, Timestamp>>>, 
-    digest: Arc<RwLock<Option<Digest>>>
+    stable_log: Arc<RwLock<HashMap<String, Timestamp>>>,
+    digest: Arc<RwLock<Option<Digest>>>,
 }
 
 impl AlignEval {
-    pub async fn start_align_eval(session: Arc<Session>, digest_key: &str, replica_name: &str, stable_log: Arc<RwLock<HashMap<String, Timestamp>>>, digest: Arc<RwLock<Option<Digest>>>) -> Self {
+    pub async fn start_align_eval(
+        session: Arc<Session>,
+        digest_key: &str,
+        replica_name: &str,
+        stable_log: Arc<RwLock<HashMap<String, Timestamp>>>,
+        digest: Arc<RwLock<Option<Digest>>>,
+    ) -> Self {
         let digest_key = format!("{}{}/**", digest_key, replica_name);
 
-        let align_eval = AlignEval{
+        let align_eval = AlignEval {
             session,
             digest_key,
             stable_log,
-            digest
+            digest,
         };
 
         align_eval.start().await
     }
 
-    async fn start(&self) -> Self{
+    async fn start(&self) -> Self {
         debug!("[ALIGN_EVAL] Creating Eval on '{}'...", self.digest_key);
-        let mut queryable = self.session
+        let mut queryable = self
+            .session
             .queryable(&self.digest_key)
             .kind(EVAL)
             .await
@@ -193,10 +214,7 @@ impl AlignEval {
         };
         (era, intervals, subintervals, contents)
     }
-
-
 }
-
 
 // replying queries
 impl AlignEval {
