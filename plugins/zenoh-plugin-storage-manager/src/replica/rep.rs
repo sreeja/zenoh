@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2017, 2020 ADLINK Technology Inc.
+// Copyright (c) 2022 ZettaScale Technology
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License 2.0 which is available at
@@ -9,8 +9,13 @@
 // SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
 //
 // Contributors:
-//   ADLINK zenoh team, <zenoh@adlink-labs.tech>
+//   ZettaScale Zenoh Team, <zenoh@zettascale.tech>
 //
+
+use super::align_eval::AlignEval;
+use super::aligner::Aligner;
+use super::digest::Digest;
+use crate::storages_mgt::StorageMessage;
 use async_std::sync::Arc;
 use async_std::sync::{Mutex, RwLock};
 use async_std::task::sleep;
@@ -35,10 +40,6 @@ use zenoh::Session;
 use zenoh_backend_traits::config::ReplicaConfig;
 use zenoh_backend_traits::Query;
 use zenoh_core::Result as ZResult;
-use super::digest::Digest;
-use super::aligner::Aligner;
-use super::align_eval::AlignEval;
-use crate::storages_mgt::StorageMessage;
 // #[path = "digest.rs"]
 // pub mod digest;
 // pub use digest::*;
@@ -56,18 +57,18 @@ use crate::storages_mgt::StorageMessage;
 
 struct ReplicaData {
     stable_log: Arc<RwLock<HashMap<String, Timestamp>>>, // log entries until the snapshot time
-    volatile_log: RwLock<HashMap<String, Timestamp>>, // log entries after the snapshot time
+    volatile_log: RwLock<HashMap<String, Timestamp>>,    // log entries after the snapshot time
     digests_published: RwLock<HashSet<u64>>, // checksum of all digests generated and published by this replica
     digests_processed: Arc<RwLock<HashSet<u64>>>, // checksum of all digests received by the replica
     last_snapshot_time: RwLock<Timestamp>,   // the latest snapshot time
     last_interval: RwLock<u64>,              // the latest interval
-    digest: Arc<RwLock<Option<Digest>>>,          // the current stable digest
+    digest: Arc<RwLock<Option<Digest>>>,     // the current stable digest
 }
 
 pub struct Replica {
-    name: String,          // name of replica  -- UUID(zenoh)-<storage_name>((-<storage_type>??))
+    name: String, // name of replica  -- UUID(zenoh)-<storage_name>((-<storage_type>??))
     session: Arc<Session>, // zenoh session used by the replica
-    key_expr: String,      // key expression of the storage to be functioning as a replica
+    key_expr: String, // key expression of the storage to be functioning as a replica
     storage: Mutex<Box<dyn zenoh_backend_traits::Storage>>, // -- the actual value being stored
     in_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
     out_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
@@ -133,10 +134,24 @@ impl Replica {
             // eval for align
             let digest_key = replica.get_digest_key();
             let replica_data = replica.replica_data.as_ref().unwrap();
-            let align_eval = AlignEval::start_align_eval(replica.session.clone(), &digest_key, &replica.name, replica_data.stable_log.clone(), replica_data.digest.clone()); //replica.start_align_eval();
-            // aligner
-            let aligner = Aligner::start_aligner(replica.session.clone(), &digest_key, &replica.name, rx_digest, tx_sample, replica_data.digests_processed.clone(), replica_data.digest.clone()); //replica.start_aligner(rx_digest);
-            // digest pub
+            let align_eval = AlignEval::start_align_eval(
+                replica.session.clone(),
+                &digest_key,
+                &replica.name,
+                replica_data.stable_log.clone(),
+                replica_data.digest.clone(),
+            ); //replica.start_align_eval();
+               // aligner
+            let aligner = Aligner::start_aligner(
+                replica.session.clone(),
+                &digest_key,
+                &replica.name,
+                rx_digest,
+                tx_sample,
+                replica_data.digests_processed.clone(),
+                replica_data.digest.clone(),
+            ); //replica.start_aligner(rx_digest);
+               // digest pub
             let digest_pub = replica.start_digest_pub();
 
             //updating snapshot time
@@ -195,8 +210,7 @@ impl Replica {
                 sample.value.payload
             );
             let digest: Digest =
-                serde_json::from_str(&format!("{:?}", sample.value.payload))
-                    .unwrap();
+                serde_json::from_str(&format!("{:?}", sample.value.payload)).unwrap();
             let ts = digest.timestamp;
             let to_be_processed = self
                 .processing_needed(from, digest.timestamp, digest.checksum, received.clone())
@@ -403,7 +417,11 @@ impl Replica {
         // };
         if result.is_ok() {
             // let timestamp = timestamp.unwrap();
-            self.update_log(sample.key_expr.as_str().to_string(), *sample.get_timestamp().unwrap()).await;
+            self.update_log(
+                sample.key_expr.as_str().to_string(),
+                *sample.get_timestamp().unwrap(),
+            )
+            .await;
         }
     }
 
@@ -639,4 +657,3 @@ impl Replica {
     //     )
     // }
 }
-

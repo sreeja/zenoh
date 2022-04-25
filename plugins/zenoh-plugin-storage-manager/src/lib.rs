@@ -39,8 +39,8 @@ use zenoh_util::LibLoader;
 mod backends_mgt;
 use backends_mgt::*;
 mod memory_backend;
-mod storages_mgt;
 mod replica;
+mod storages_mgt;
 
 zenoh_plugin_trait::declare_plugin!(StoragesPlugin);
 pub struct StoragesPlugin {}
