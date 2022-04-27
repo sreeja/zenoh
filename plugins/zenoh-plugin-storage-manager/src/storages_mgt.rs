@@ -50,6 +50,7 @@ pub(crate) async fn start_storage(
     // TODO: Key-value stores and time-series to be addressed
     // TODO: fix the name; to be read from the configuration file
     // let replica =
+    let startup_entries = storage.get_all_entries().await?;
     Replica::initialize_replica(
         config,
         zenoh.clone(),
@@ -58,7 +59,7 @@ pub(crate) async fn start_storage(
         out_interceptor,
         &key_expr,
         &admin_key,
-        HashMap::new(),
+        startup_entries,
     )
     .await
     // replica.start_replica().await
