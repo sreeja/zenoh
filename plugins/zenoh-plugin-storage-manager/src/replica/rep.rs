@@ -38,7 +38,7 @@ use zenoh::queryable;
 use zenoh::time::Timestamp;
 use zenoh::Session;
 use zenoh_backend_traits::config::ReplicaConfig;
-use zenoh_backend_traits::Query;
+use zenoh_backend_traits::{Query, StorageInsertionResult};
 use zenoh_core::Result as ZResult;
 // #[path = "digest.rs"]
 // pub mod digest;
@@ -86,7 +86,7 @@ impl Replica {
         out_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
         key_expr: &str,
         admin_key: &str,
-        log: HashMap<String, Timestamp>,
+        log: Vec<(String, Timestamp)>,
     ) -> ZResult<Sender<crate::StorageMessage>> {
         // Ex: /@/router/43C9AE839B274A259B437F78CC081D6A/status/plugins/storage_manager/storages/demo1 -> 390CEC11A1E34977A1C609A35BC015E6/demo1 (/memory needed????)
         let parts: Vec<&str> = admin_key.split('/').collect();
@@ -207,10 +207,10 @@ impl Replica {
                 from,
                 sample.kind,
                 sample.key_expr.as_str(),
-                sample.value.payload
+                sample.value
             );
             let digest: Digest =
-                serde_json::from_str(&format!("{:?}", sample.value.payload)).unwrap();
+                serde_json::from_str(&format!("{}", sample.value)).unwrap();
             let ts = digest.timestamp;
             let to_be_processed = self
                 .processing_needed(from, digest.timestamp, digest.checksum, received.clone())
@@ -408,15 +408,7 @@ impl Replica {
 
         let mut storage = self.storage.lock().await;
         let result = storage.on_sample(sample.clone()).await;
-        // let storage_result = match result {
-        //     Ok(ts) => Some(ts),
-        //     Err(e) => {
-        //         warn!("Storage {} raised an error receiving a sample: {}", self.name, e);
-        //         None
-        //     }
-        // };
-        if result.is_ok() {
-            // let timestamp = timestamp.unwrap();
+        if result.is_ok() && !matches!(result.unwrap(), StorageInsertionResult::Outdated) {
             self.update_log(
                 sample.key_expr.as_str().to_string(),
                 *sample.get_timestamp().unwrap(),
@@ -482,7 +474,7 @@ impl Replica {
 
 // maintain log and digest
 impl Replica {
-    async fn initialize_log(&self, log: HashMap<String, Timestamp>) {
+    async fn initialize_log(&self, log: Vec<(String, Timestamp)>) {
         let replica_data = self.replica_data.as_ref().unwrap();
         let last_snapshot_time = replica_data.last_snapshot_time.read().await;
 
@@ -492,9 +484,21 @@ impl Replica {
             // depending on the associated timestamp, either to stable_log or volatile log
             // entries until last_snapshot_time goes to stable
             if ts > *last_snapshot_time {
-                (*volatile_log).insert(k, ts);
+                if volatile_log.contains_key(&k) {
+                    if *volatile_log.get(&k).unwrap() < ts {
+                        (*volatile_log).insert(k, ts);
+                    }
+                } else {
+                    (*volatile_log).insert(k, ts);
+                }
             } else {
-                (*stable_log).insert(k, ts);
+                if stable_log.contains_key(&k) {
+                    if *stable_log.get(&k).unwrap() < ts {
+                        (*stable_log).insert(k, ts);
+                    }
+                } else {
+                    (*stable_log).insert(k, ts);
+                }
             }
         }
         drop(volatile_log);
