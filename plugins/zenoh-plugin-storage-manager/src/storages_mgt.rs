@@ -11,7 +11,6 @@
 // Contributors:
 //   ZettaScale Zenoh Team, <zenoh@zettascale.tech>
 //
-use std::collections::HashMap;
 // use async_std::channel::{bounded, Sender};
 use async_std::sync::Arc;
 // use async_std::task;
@@ -28,7 +27,7 @@ use zenoh::Session;
 use zenoh_backend_traits::config::ReplicaConfig;
 use zenoh_core::Result as ZResult;
 
-pub use super::replica::Replica;
+pub use super::replica::{Replica, StorageService};
 
 pub enum StorageMessage {
     Stop,
@@ -44,23 +43,30 @@ pub(crate) async fn start_storage(
     out_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
     zenoh: Arc<Session>,
 ) -> ZResult<flume::Sender<StorageMessage>> {
-    debug!("Start storage {} on {}", admin_key, key_expr);
-
-    // TODO: start storage + replica: digest_sub, digest_pub, aligner and align_eval
-    // TODO: Key-value stores and time-series to be addressed
-    // TODO: fix the name; to be read from the configuration file
-    // let replica =
-    let startup_entries = storage.get_all_entries().await?;
-    Replica::initialize_replica(
-        config,
-        zenoh.clone(),
-        storage,
-        in_interceptor,
-        out_interceptor,
-        &key_expr,
-        &admin_key,
-        startup_entries,
-    )
-    .await
+    
+    // Ex: /@/router/390CEC11A1E34977A1C609A35BC015E6/status/plugins/storage_manager/storages/demo1 -> 390CEC11A1E34977A1C609A35BC015E6/demo1 (/memory needed????)
+    let parts: Vec<&str> = admin_key.split('/').collect();
+    let uuid = parts[3];
+    let storage_name = parts[8];
+    let name = format!("{}/{}", uuid, storage_name);
+    
+    debug!("Start storage {} on {}", name, key_expr);
+    
+    if config.is_some() {
+        let startup_entries = storage.get_all_entries().await?;
+        Replica::initialize_replica(
+            config.unwrap(),
+            zenoh.clone(),
+            storage,
+            in_interceptor,
+            out_interceptor,
+            &key_expr,
+            &name,
+            startup_entries,
+        )
+        .await
     // replica.start_replica().await
+    } else {
+        StorageService::start(zenoh.clone(), &key_expr, &name, storage, in_interceptor, out_interceptor, None, None).await
+    }
 }

@@ -13,58 +13,45 @@
 //
 
 use async_std::sync::Arc;
-use async_std::sync::{Mutex, RwLock};
-use async_std::task::sleep;
+use async_std::sync::RwLock;
 use flume::{Receiver, Sender};
-use futures::join;
-use futures::select;
 use futures::stream::StreamExt;
-use log::{debug, error, info, trace, warn};
+use log::debug;
 use std::collections::{HashMap, HashSet};
-use std::convert::TryFrom;
-use std::fs;
-use std::io::Write;
 use std::str;
-use std::time::Duration;
-use zenoh::net::protocol::io::SplitBuffer;
 use zenoh::prelude::Sample;
-use zenoh::prelude::*;
 use zenoh::prelude::{KeyExpr, Value};
-use zenoh::queryable;
 use zenoh::time::Timestamp;
 use zenoh::Session;
-use zenoh_backend_traits::config::ReplicaConfig;
-use zenoh_backend_traits::Query;
-use zenoh_core::Result as ZResult;
+use super::Snapshotter;
 
 pub struct Aligner {
     session: Arc<Session>,
     digest_key: String,
-    replica_name: String,
-    digest: Arc<RwLock<Option<super::Digest>>>,
+    // replica_name: String,
+    snapshotter: Arc<Snapshotter>,
     rx_digest: Receiver<(String, super::Digest)>,
     tx_sample: Sender<Sample>,
-    digests_processed: Arc<RwLock<HashSet<u64>>>,
+    digests_processed: RwLock<HashSet<u64>>,
 }
 
 impl Aligner {
     pub async fn start_aligner(
         session: Arc<Session>,
         digest_key: &str,
-        replica_name: &str,
+        // replica_name: &str,
         rx_digest: Receiver<(String, super::Digest)>,
         tx_sample: Sender<Sample>,
-        digests_processed: Arc<RwLock<HashSet<u64>>>,
-        digest: Arc<RwLock<Option<super::Digest>>>,
+        snapshotter: Arc<Snapshotter>,
     ) {
         let aligner = Aligner {
             session,
             digest_key: digest_key.to_string(),
-            replica_name: replica_name.to_string(),
-            digest,
+            // replica_name: replica_name.to_string(),
+            snapshotter,
             rx_digest,
             tx_sample,
-            digests_processed,
+            digests_processed: RwLock::new(HashSet::new()),
         };
         aligner.start().await;
     }
@@ -91,7 +78,7 @@ impl Aligner {
         let processed = processed_set.contains(&checksum);
         drop(processed_set);
         if processed {
-            debug!("[DIGEST_SUB]Dropping {} since already processed", checksum);
+            debug!("[ALIGNER]Dropping {} since already processed", checksum);
             true
         } else {
             false
@@ -167,8 +154,7 @@ impl Aligner {
     async fn get_missing_content(&self, other: super::Digest, from: &str) -> Vec<Timestamp> {
         // get my digest
         // let replica_data = self.replica_data.as_ref().unwrap();
-        let digest = self.digest.read().await;
-        let this = digest.as_ref().unwrap();
+        let this = &self.snapshotter.get_digest().await;
 
         // get first level diff of digest wrt other - subintervals, of HOT, intervals of WARM and COLD if misaligned
         let mis_eras = this.get_era_diff(other.eras.clone());

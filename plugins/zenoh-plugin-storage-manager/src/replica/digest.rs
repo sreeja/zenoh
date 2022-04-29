@@ -19,7 +19,7 @@ use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::str::FromStr;
 use std::string::ParseError;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 use zenoh::time::Timestamp;
 // use std::error::Error;
 // use std::fmt;
@@ -33,7 +33,6 @@ use zenoh::time::Timestamp;
 
 #[derive(Eq, PartialEq, Clone, Debug, Deserialize, Serialize)]
 pub struct DigestConfig {
-    pub propagation_delay: Duration,
     pub delta: Duration,
     pub sub_intervals: usize,
     pub hot: usize,

@@ -13,8 +13,8 @@
 //
 
 use super::digest::*;
-use super::Digest;
-use async_std::sync::{Arc, RwLock};
+use super::Snapshotter;
+use async_std::sync::Arc;
 use futures::stream::StreamExt;
 use log::{debug, error};
 use std::collections::{HashMap, HashSet};
@@ -37,8 +37,7 @@ use zenoh::Session;
 pub struct AlignEval {
     session: Arc<Session>,
     digest_key: String,
-    stable_log: Arc<RwLock<HashMap<String, Timestamp>>>,
-    digest: Arc<RwLock<Option<Digest>>>,
+    snapshotter: Arc<Snapshotter>,
 }
 
 impl AlignEval {
@@ -46,16 +45,14 @@ impl AlignEval {
         session: Arc<Session>,
         digest_key: &str,
         replica_name: &str,
-        stable_log: Arc<RwLock<HashMap<String, Timestamp>>>,
-        digest: Arc<RwLock<Option<Digest>>>,
+        snapshotter: Arc<Snapshotter>,
     ) -> Self {
         let digest_key = format!("{}{}/**", digest_key, replica_name);
 
         let align_eval = AlignEval {
             session,
             digest_key,
-            stable_log,
-            digest,
+            snapshotter,
         };
 
         align_eval.start().await
@@ -225,11 +222,11 @@ impl AlignEval {
         // let mut key: Option<String> = None;
         let mut key = None;
         // let replica_data = self.replica_data.as_ref().unwrap();
-        let log = self.stable_log.read().await;
+        let log = self.snapshotter.get_stable_log().await;
         // debug!("**************** log is {:?}", *log);
-        for (k, ts) in &*log {
+        for (k, ts) in log {
             // debug!("************** searching for {} in log", timestamp);
-            if *ts == timestamp {
+            if ts == timestamp {
                 // debug!("**************** got corresponding key {} ", k);
                 key = Some(k.to_string());
             }
@@ -291,26 +288,23 @@ impl AlignEval {
 
     async fn get_intervals(&self, era: EraType) -> HashMap<u64, u64> {
         // let replica_data = self.replica_data.as_ref().unwrap();
-        let digest = self.digest.read().await;
-        digest.as_ref().unwrap().get_era_content(era)
+        let digest = self.snapshotter.get_digest().await;
+        digest.get_era_content(era)
     }
 
     async fn get_subintervals(&self, interval: u64) -> HashMap<u64, u64> {
         // let replica_data = self.replica_data.as_ref().unwrap();
-        let digest = self.digest.read().await;
+        let digest = self.snapshotter.get_digest().await;
         let mut intervals = HashSet::new();
         intervals.insert(interval);
-        digest.as_ref().unwrap().get_interval_content(intervals)
+        digest.get_interval_content(intervals)
     }
 
     async fn get_content(&self, subinterval: u64) -> HashMap<u64, Vec<zenoh::time::Timestamp>> {
         // let replica_data = self.replica_data.as_ref().unwrap();
-        let digest = self.digest.read().await;
+        let digest = self.snapshotter.get_digest().await;
         let mut subintervals = HashSet::new();
         subintervals.insert(subinterval);
-        digest
-            .as_ref()
-            .unwrap()
-            .get_subinterval_content(subintervals)
+        digest.get_subinterval_content(subintervals)
     }
 }
