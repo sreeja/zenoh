@@ -17,11 +17,15 @@ use std::time::SystemTime;
 pub mod align_eval;
 pub mod aligner;
 pub mod digest;
+pub mod storage;
+pub mod snapshotter;
 pub mod rep;
 
 pub use align_eval::AlignEval;
 pub use aligner::Aligner;
 pub use digest::{Digest, DigestConfig, EraType};
+pub use storage::StorageService;
+pub use snapshotter::{ReplicationInfo, Snapshotter};
 pub use rep::Replica;
 
 const ERA: &str = "era";
