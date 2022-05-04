@@ -43,18 +43,17 @@ pub(crate) async fn start_storage(
     out_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
     zenoh: Arc<Session>,
 ) -> ZResult<flume::Sender<StorageMessage>> {
-    
     // Ex: /@/router/390CEC11A1E34977A1C609A35BC015E6/status/plugins/storage_manager/storages/demo1 -> 390CEC11A1E34977A1C609A35BC015E6/demo1 (/memory needed????)
     let parts: Vec<&str> = admin_key.split('/').collect();
     let uuid = parts[3];
     let storage_name = parts[8];
     let name = format!("{}/{}", uuid, storage_name);
-    
+
     debug!("Start storage {} on {}", name, key_expr);
-    
+
     if config.is_some() {
         let startup_entries = storage.get_all_entries().await?;
-        Replica::initialize_replica(
+        Replica::start(
             config.unwrap(),
             zenoh.clone(),
             storage,
@@ -65,8 +64,17 @@ pub(crate) async fn start_storage(
             startup_entries,
         )
         .await
-    // replica.start_replica().await
     } else {
-        StorageService::start(zenoh.clone(), &key_expr, &name, storage, in_interceptor, out_interceptor, None, None).await
+        StorageService::start(
+            zenoh.clone(),
+            &key_expr,
+            &name,
+            storage,
+            in_interceptor,
+            out_interceptor,
+            None,
+            None,
+        )
+        .await
     }
 }

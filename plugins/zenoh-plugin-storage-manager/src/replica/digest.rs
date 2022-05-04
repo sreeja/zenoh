@@ -230,14 +230,14 @@ impl Digest {
         for log_entry in processed_log {
             subinterval_content
                 .entry(log_entry.subinterval)
-                .or_insert_with(|| Vec::new());
+                .or_insert_with(Vec::new);
             subinterval_content
                 .get_mut(&log_entry.subinterval)
                 .unwrap()
                 .push(log_entry.content);
             interval_content
                 .entry(log_entry.interval)
-                .or_insert_with(|| Vec::new());
+                .or_insert_with(Vec::new);
             interval_content
                 .get_mut(&log_entry.interval)
                 .unwrap()
@@ -287,8 +287,6 @@ impl Digest {
 
         subintervals_to_update.extend(further_subintervals);
         intervals_to_update.extend(further_intervals);
-        // let subintervals_to_update = subintervals_to_update.union(&further_subintervals);
-        // let intervals_to_update = intervals_to_update.union(&further_intervals);
         eras_to_update.extend(further_eras);
         eras_to_update.extend(realigned_eras);
 
@@ -346,56 +344,37 @@ impl Digest {
         let mut intervals_to_update = HashSet::new();
         let mut subintervals_to_update = HashSet::new();
 
-        for entry in content {
+        for ts in content {
             let (era, interval, subinterval) =
-                Digest::get_bucket(&current.config, latest_interval, entry);
+                Digest::get_bucket(&current.config, latest_interval, ts);
             eras_to_update.insert(era.clone());
             intervals_to_update.insert(interval);
             subintervals_to_update.insert(subinterval);
 
-            if current.subintervals.contains_key(&subinterval) {
-                current
-                    .subintervals
-                    .get_mut(&subinterval)
-                    .unwrap()
-                    .content
-                    .push(entry);
-            } else {
-                current.subintervals.insert(
-                    subinterval,
-                    SubInterval {
-                        checksum: 0,
-                        content: vec![entry],
-                    },
-                );
-            }
-            if current.intervals.contains_key(&interval) {
-                current
-                    .intervals
-                    .get_mut(&interval)
-                    .unwrap()
-                    .content
-                    .push(subinterval);
-            } else {
-                current.intervals.insert(
-                    interval,
-                    Interval {
-                        checksum: 0,
-                        content: vec![subinterval],
-                    },
-                );
-            }
-            if current.eras.contains_key(&era) {
-                current.eras.get_mut(&era).unwrap().content.push(interval);
-            } else {
-                current.eras.insert(
-                    era,
-                    Interval {
-                        checksum: 0,
-                        content: vec![interval],
-                    },
-                );
-            }
+            current
+                .subintervals
+                .entry(subinterval)
+                .and_modify(|e| e.content.push(ts))
+                .or_insert(SubInterval {
+                    checksum: 0,
+                    content: vec![ts],
+                });
+            current
+                .intervals
+                .entry(interval)
+                .and_modify(|e| e.content.push(subinterval))
+                .or_insert(Interval {
+                    checksum: 0,
+                    content: vec![subinterval],
+                });
+            current
+                .eras
+                .entry(era)
+                .and_modify(|e| e.content.push(interval))
+                .or_insert(Interval {
+                    checksum: 0,
+                    content: vec![interval],
+                });
         }
 
         (
@@ -488,31 +467,19 @@ impl Digest {
         }
         for (interval, prev_era, new_era) in to_modify {
             // move the interval from its previous era to the new
-            if current.eras.contains_key(&prev_era) {
-                current.eras.get_mut(&prev_era).unwrap().content.dedup();
-                current
-                    .eras
-                    .get_mut(&prev_era)
-                    .unwrap()
-                    .content
-                    .retain(|&x| x != interval);
-            }
-            if current.eras.contains_key(&new_era) {
-                current
-                    .eras
-                    .get_mut(&new_era)
-                    .unwrap()
-                    .content
-                    .push(interval);
-            } else {
-                current.eras.insert(
-                    new_era,
-                    Interval {
-                        checksum: 0,
-                        content: vec![interval],
-                    },
-                );
-            }
+            current
+                .eras
+                .entry(prev_era)
+                .and_modify(|e| e.content.dedup())
+                .and_modify(|e| e.content.retain(|&x| x != interval));
+            current
+                .eras
+                .entry(new_era)
+                .and_modify(|e| e.content.push(interval))
+                .or_insert(Interval {
+                    checksum: 0,
+                    content: vec![interval],
+                });
         }
 
         (current.clone(), eras_to_update)

@@ -11,6 +11,7 @@
 // Contributors:
 //   ZettaScale Zenoh Team, <zenoh@zettascale.tech>
 //
+use crate::storages_mgt::StorageMessage;
 use async_std::sync::Arc;
 use async_std::sync::Mutex;
 use flume::{Receiver, Sender};
@@ -25,30 +26,38 @@ use zenoh::time::Timestamp;
 use zenoh::Session;
 use zenoh_backend_traits::{Query, StorageInsertionResult};
 use zenoh_core::Result as ZResult;
-use crate::storages_mgt::StorageMessage;
 
 pub struct StorageService {
-    session: Arc<Session>, 
+    session: Arc<Session>,
     key_expr: String,
     name: String,
-    storage: Mutex<Box<dyn zenoh_backend_traits::Storage>>, 
+    storage: Mutex<Box<dyn zenoh_backend_traits::Storage>>,
     in_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
     out_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
     aligner_updates: Option<Receiver<Sample>>,
-    log_propagation: Option<Sender<(String, Timestamp)>>
+    log_propagation: Option<Sender<(String, Timestamp)>>,
 }
 
 impl StorageService {
-    pub async fn start(session: Arc<Session>, key_expr: &str, name: &str, storage: Box<dyn zenoh_backend_traits::Storage>, in_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>, out_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>, aligner_updates: Option<Receiver<Sample>>, log_propagation: Option<Sender<(String, Timestamp)>>) -> ZResult<Sender<StorageMessage>> {
+    pub async fn start(
+        session: Arc<Session>,
+        key_expr: &str,
+        name: &str,
+        storage: Box<dyn zenoh_backend_traits::Storage>,
+        in_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
+        out_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
+        aligner_updates: Option<Receiver<Sample>>,
+        log_propagation: Option<Sender<(String, Timestamp)>>,
+    ) -> ZResult<Sender<StorageMessage>> {
         let storage_service = StorageService {
-            session, 
+            session,
             key_expr: key_expr.to_string(),
             name: name.to_string(),
             storage: Mutex::new(storage),
             in_interceptor,
             out_interceptor,
             aligner_updates,
-            log_propagation
+            log_propagation,
         };
         storage_service.start_storage_queryable_subscriber().await
     }
@@ -129,7 +138,7 @@ impl StorageService {
                                 return Err(e.into());
                             }
                         }
-                        
+
                     }
                 );
             }
@@ -174,7 +183,7 @@ impl StorageService {
             }
         }
     }
-        
+
     async fn process_sample(&self, sample: Sample) {
         debug!("[STORAGE] Processing sample: {}", sample);
         // Call incoming data interceptor (if any)
@@ -188,11 +197,14 @@ impl StorageService {
 
         let mut storage = self.storage.lock().await;
         let result = storage.on_sample(sample.clone()).await;
-        if self.log_propagation.as_ref().is_some() && result.is_ok() && !matches!(result.unwrap(), StorageInsertionResult::Outdated) {
+        if self.log_propagation.as_ref().is_some()
+            && result.is_ok()
+            && !matches!(result.unwrap(), StorageInsertionResult::Outdated)
+        {
             let sending = self.log_propagation.as_ref().unwrap().send((
                 sample.key_expr.as_str().to_string(),
-                *sample.get_timestamp().unwrap())
-            );
+                *sample.get_timestamp().unwrap(),
+            ));
             match sending {
                 Ok(_) => (),
                 Err(e) => {
@@ -201,7 +213,5 @@ impl StorageService {
             }
         }
         drop(storage);
-
     }
-
 }

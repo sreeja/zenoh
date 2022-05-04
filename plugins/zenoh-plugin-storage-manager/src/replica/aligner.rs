@@ -12,6 +12,7 @@
 //   ZettaScale Zenoh Team, <zenoh@zettascale.tech>
 //
 
+use super::Snapshotter;
 use async_std::sync::Arc;
 use async_std::sync::RwLock;
 use flume::{Receiver, Sender};
@@ -23,7 +24,6 @@ use zenoh::prelude::Sample;
 use zenoh::prelude::{KeyExpr, Value};
 use zenoh::time::Timestamp;
 use zenoh::Session;
-use super::Snapshotter;
 
 pub struct Aligner {
     session: Arc<Session>,
