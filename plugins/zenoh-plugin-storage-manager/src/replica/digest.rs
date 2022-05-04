@@ -39,13 +39,13 @@ pub struct DigestConfig {
     pub warm: usize,
 }
 
-#[derive(PartialEq, Eq, Debug, Clone)]
-pub struct Log {
-    pub era: EraType,
-    pub interval: u64,
-    pub subinterval: u64,
-    pub content: zenoh::time::Timestamp,
-}
+// #[derive(PartialEq, Eq, Debug, Clone)]
+// pub struct Log {
+//     pub era: EraType,
+//     pub interval: u64,
+//     pub subinterval: u64,
+//     pub content: zenoh::time::Timestamp,
+// }
 
 // TODO: split this such that only minimal information is sent through wire. Maybe a new CompressedDigest struct would also work
 #[derive(Eq, PartialEq, Clone, Debug, Deserialize, Serialize)]
@@ -133,12 +133,17 @@ impl Digest {
         config: DigestConfig,
         raw_log: Vec<Timestamp>,
         latest_interval: u64,
-        latest_snapshot_time: Timestamp,
     ) -> Digest {
-        let processed_log =
-            Digest::process_log(&config, raw_log, latest_interval, latest_snapshot_time);
-        let (subinterval_content, interval_content, era_content) =
-            Digest::populate_content(processed_log);
+        let subinterval_content = Digest::get_subintervals(raw_log, &config);
+        let interval_content = Digest::get_intervals(
+            subinterval_content.keys().cloned().collect(),
+            config.sub_intervals,
+        );
+        let era_content = Digest::get_eras(
+            interval_content.keys().cloned().collect(),
+            &config,
+            latest_interval,
+        );
 
         let mut subinterval_hash = HashMap::new();
         for (sub, content) in subinterval_content {
@@ -217,54 +222,112 @@ impl Digest {
         Digest::get_content_hash(&hashable_content)
     }
 
-    fn populate_content(
-        processed_log: Vec<Log>,
-    ) -> (
-        HashMap<u64, Vec<Timestamp>>,
-        HashMap<u64, Vec<u64>>,
-        HashMap<EraType, Vec<u64>>,
-    ) {
-        let mut subinterval_content = HashMap::new();
-        let mut interval_content = HashMap::new();
-        let mut era_content = HashMap::new();
-        for log_entry in processed_log {
+    fn get_subintervals(
+        log: Vec<Timestamp>,
+        config: &DigestConfig,
+    ) -> HashMap<u64, Vec<Timestamp>> {
+        let mut subinterval_content: HashMap<u64, Vec<Timestamp>> = HashMap::new();
+        for ts in log {
+            let sub = Digest::get_subinterval(config.delta, ts, config.sub_intervals);
             subinterval_content
-                .entry(log_entry.subinterval)
-                .or_insert_with(Vec::new);
-            subinterval_content
-                .get_mut(&log_entry.subinterval)
-                .unwrap()
-                .push(log_entry.content);
-            interval_content
-                .entry(log_entry.interval)
-                .or_insert_with(Vec::new);
-            interval_content
-                .get_mut(&log_entry.interval)
-                .unwrap()
-                .push(log_entry.subinterval);
-            if !era_content.contains_key(&log_entry.era) {
-                era_content.insert(log_entry.era.clone(), Vec::new());
-            }
-            era_content
-                .get_mut(&log_entry.era)
-                .unwrap()
-                .push(log_entry.interval);
+                .entry(sub)
+                .and_modify(|e| e.push(ts))
+                .or_insert_with(|| vec![ts]);
         }
-
         for content in subinterval_content.values_mut() {
             content.sort_unstable();
             content.dedup();
+        }
+        subinterval_content
+    }
+
+    fn get_intervals(
+        subinterval_list: HashSet<u64>,
+        subintervals: usize,
+    ) -> HashMap<u64, Vec<u64>> {
+        let mut interval_content: HashMap<u64, Vec<u64>> = HashMap::new();
+        for sub in subinterval_list {
+            let interval = Digest::get_interval(sub, subintervals);
+            interval_content
+                .entry(interval)
+                .and_modify(|e| e.push(sub))
+                .or_insert_with(|| vec![sub]);
         }
         for content in interval_content.values_mut() {
             content.sort_unstable();
             content.dedup();
         }
+        interval_content
+    }
+
+    fn get_eras(
+        interval_list: HashSet<u64>,
+        config: &DigestConfig,
+        latest_interval: u64,
+    ) -> HashMap<EraType, Vec<u64>> {
+        let mut era_content: HashMap<EraType, Vec<u64>> = HashMap::new();
+        for int in interval_list {
+            let era = Digest::get_era(config, latest_interval, int);
+            era_content
+                .entry(era)
+                .and_modify(|e| e.push(int))
+                .or_insert_with(|| vec![int]);
+        }
         for content in era_content.values_mut() {
             content.sort_unstable();
             content.dedup();
         }
-        (subinterval_content, interval_content, era_content)
+        era_content
     }
+
+    // fn populate_content(
+    //     processed_log: Vec<Timestamp>,
+    // ) -> (
+    //     HashMap<u64, Vec<Timestamp>>,
+    //     HashMap<u64, Vec<u64>>,
+    //     HashMap<EraType, Vec<u64>>,
+    // ) {
+    //     let mut subinterval_content = HashMap::new();
+    //     let mut interval_content = HashMap::new();
+    //     let mut era_content = HashMap::new();
+    //     for log_entry in processed_log {
+    //         subinterval_content
+    //             .entry(log_entry.subinterval)
+    //             .or_insert_with(Vec::new);
+    //         subinterval_content
+    //             .get_mut(&log_entry.subinterval)
+    //             .unwrap()
+    //             .push(log_entry.content);
+    //         interval_content
+    //             .entry(log_entry.interval)
+    //             .or_insert_with(Vec::new);
+    //         interval_content
+    //             .get_mut(&log_entry.interval)
+    //             .unwrap()
+    //             .push(log_entry.subinterval);
+    //         if !era_content.contains_key(&log_entry.era) {
+    //             era_content.insert(log_entry.era.clone(), Vec::new());
+    //         }
+    //         era_content
+    //             .get_mut(&log_entry.era)
+    //             .unwrap()
+    //             .push(log_entry.interval);
+    //     }
+
+    //     for content in subinterval_content.values_mut() {
+    //         content.sort_unstable();
+    //         content.dedup();
+    //     }
+    //     for content in interval_content.values_mut() {
+    //         content.sort_unstable();
+    //         content.dedup();
+    //     }
+    //     for content in era_content.values_mut() {
+    //         content.sort_unstable();
+    //         content.dedup();
+    //     }
+    //     (subinterval_content, interval_content, era_content)
+    // }
 
     pub async fn update_digest(
         mut current: Digest,
@@ -345,11 +408,13 @@ impl Digest {
         let mut subintervals_to_update = HashSet::new();
 
         for ts in content {
-            let (era, interval, subinterval) =
-                Digest::get_bucket(&current.config, latest_interval, ts);
-            eras_to_update.insert(era.clone());
-            intervals_to_update.insert(interval);
+            let subinterval =
+                Digest::get_subinterval(current.config.delta, ts, current.config.sub_intervals);
             subintervals_to_update.insert(subinterval);
+            let interval = Digest::get_interval(subinterval, current.config.sub_intervals);
+            intervals_to_update.insert(interval);
+            let era = Digest::get_era(&current.config, latest_interval, interval);
+            eras_to_update.insert(era.clone());
 
             current
                 .subintervals
@@ -395,8 +460,13 @@ impl Digest {
         let mut subintervals_to_update = HashSet::new();
 
         for entry in redundant_content {
-            let (era, interval, subinterval) =
-                Digest::get_bucket(&current.config, latest_interval, entry);
+            let subinterval =
+                Digest::get_subinterval(current.config.delta, entry, current.config.sub_intervals);
+            subintervals_to_update.insert(subinterval);
+            let interval = Digest::get_interval(subinterval, current.config.sub_intervals);
+            intervals_to_update.insert(interval);
+            let era = Digest::get_era(&current.config, latest_interval, interval);
+            eras_to_update.insert(era.clone());
 
             if current.subintervals.contains_key(&subinterval) {
                 current
@@ -485,11 +555,7 @@ impl Digest {
         (current.clone(), eras_to_update)
     }
 
-    fn get_bucket(
-        config: &DigestConfig,
-        latest_interval: u64,
-        ts: Timestamp,
-    ) -> (EraType, u64, u64) {
+    fn get_subinterval(delta: Duration, ts: Timestamp, subintervals: usize) -> u64 {
         let ts = u64::try_from(
             ts.get_time()
                 .to_system_time()
@@ -498,12 +564,26 @@ impl Digest {
                 .as_millis(),
         )
         .unwrap();
-        let delta = u64::try_from(config.delta.as_millis()).unwrap();
+        let delta = u64::try_from(delta.as_millis()).unwrap();
+        ts / (delta / u64::try_from(subintervals).unwrap())
+    }
 
-        let interval = ts / delta;
-        let subinterval = ts / (delta / u64::try_from(config.sub_intervals).unwrap());
-        let era = Digest::get_era(config, latest_interval, interval);
-        (era, interval, subinterval)
+    // fn get_interval(delta:Duration, ts:Timestamp) -> u64 {
+    //     let ts = u64::try_from(
+    //         ts.get_time()
+    //             .to_system_time()
+    //             .duration_since(super::EPOCH_START)
+    //             .unwrap()
+    //             .as_millis(),
+    //     )
+    //     .unwrap();
+    //     let delta = u64::try_from(delta.as_millis()).unwrap();
+    //     ts / delta
+    // }
+
+    fn get_interval(subinterval: u64, subintervals: usize) -> u64 {
+        let subintervals = u64::try_from(subintervals).unwrap();
+        subinterval / subintervals
     }
 
     fn get_era(config: &DigestConfig, latest_interval: u64, interval: u64) -> EraType {
@@ -520,29 +600,6 @@ impl Digest {
         } else {
             EraType::Cold
         }
-    }
-
-    fn process_log(
-        config: &DigestConfig,
-        raw_log: Vec<zenoh::time::Timestamp>,
-        latest_interval: u64,
-        latest_snapshot_time: Timestamp,
-    ) -> Vec<Log> {
-        let mut log = Vec::new();
-
-        for entry_ts in raw_log {
-            if entry_ts <= latest_snapshot_time {
-                let (era, interval, subinterval) =
-                    Digest::get_bucket(config, latest_interval, entry_ts);
-                log.push(Log {
-                    era,
-                    interval,
-                    subinterval,
-                    content: entry_ts,
-                });
-            }
-        }
-        log
     }
 }
 

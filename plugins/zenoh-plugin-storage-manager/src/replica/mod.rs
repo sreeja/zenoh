@@ -26,7 +26,7 @@ pub use aligner::Aligner;
 pub use digest::{Digest, DigestConfig, EraType};
 pub use rep::Replica;
 pub use snapshotter::{ReplicationInfo, Snapshotter};
-pub use storage::StorageService;
+pub use storage::{ReplicationService, StorageService};
 
 const ERA: &str = "era";
 const INTERVALS: &str = "intervals";

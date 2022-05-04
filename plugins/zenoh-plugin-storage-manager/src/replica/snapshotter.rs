@@ -75,7 +75,6 @@ impl Snapshotter {
                     },
                     Vec::new(),
                     last_interval,
-                    last_snapshot_time,
                 ))),
             },
         };
@@ -191,7 +190,6 @@ impl Snapshotter {
             },
             (*log_locked).values().copied().collect(),
             *latest_interval,
-            *latest_snapshot_time,
         );
         drop(latest_interval);
         drop(latest_snapshot_time);

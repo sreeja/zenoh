@@ -27,6 +27,11 @@ use zenoh::Session;
 use zenoh_backend_traits::{Query, StorageInsertionResult};
 use zenoh_core::Result as ZResult;
 
+pub struct ReplicationService {
+    pub aligner_updates: Receiver<Sample>,
+    pub log_propagation: Sender<(String, Timestamp)>,
+}
+
 pub struct StorageService {
     session: Arc<Session>,
     key_expr: String,
@@ -34,8 +39,7 @@ pub struct StorageService {
     storage: Mutex<Box<dyn zenoh_backend_traits::Storage>>,
     in_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
     out_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
-    aligner_updates: Option<Receiver<Sample>>,
-    log_propagation: Option<Sender<(String, Timestamp)>>,
+    replication: Option<ReplicationService>,
 }
 
 impl StorageService {
@@ -46,8 +50,8 @@ impl StorageService {
         storage: Box<dyn zenoh_backend_traits::Storage>,
         in_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
         out_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
-        aligner_updates: Option<Receiver<Sample>>,
-        log_propagation: Option<Sender<(String, Timestamp)>>,
+        replication: Option<ReplicationService>, // aligner_updates: Option<Receiver<Sample>>,
+                                                 // log_propagation: Option<Sender<(String, Timestamp)>>
     ) -> ZResult<Sender<StorageMessage>> {
         let storage_service = StorageService {
             session,
@@ -56,8 +60,7 @@ impl StorageService {
             storage: Mutex::new(storage),
             in_interceptor,
             out_interceptor,
-            aligner_updates,
-            log_propagation,
+            replication,
         };
         storage_service.start_storage_queryable_subscriber().await
     }
@@ -91,8 +94,8 @@ impl StorageService {
         };
 
         // TODO: refactor
-        if self.aligner_updates.is_some() {
-            let aligner_updates = self.aligner_updates.as_ref().unwrap();
+        if self.replication.is_some() {
+            let aligner_updates = &self.replication.as_ref().unwrap().aligner_updates;
             loop {
                 select!(
                     // on sample for key_expr
@@ -197,11 +200,11 @@ impl StorageService {
 
         let mut storage = self.storage.lock().await;
         let result = storage.on_sample(sample.clone()).await;
-        if self.log_propagation.as_ref().is_some()
+        if self.replication.is_some()
             && result.is_ok()
             && !matches!(result.unwrap(), StorageInsertionResult::Outdated)
         {
-            let sending = self.log_propagation.as_ref().unwrap().send((
+            let sending = self.replication.as_ref().unwrap().log_propagation.send((
                 sample.key_expr.as_str().to_string(),
                 *sample.get_timestamp().unwrap(),
             ));
