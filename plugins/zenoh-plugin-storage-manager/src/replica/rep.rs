@@ -11,7 +11,7 @@
 // Contributors:
 //   ZettaScale Zenoh Team, <zenoh@zettascale.tech>
 //
-use super::{AlignEval, Aligner, Digest, Snapshotter, StorageService};
+use super::{AlignEval, Aligner, Digest, ReplicationService, Snapshotter, StorageService};
 use async_std::sync::Arc;
 use async_std::sync::RwLock;
 use async_std::task::sleep;
@@ -45,9 +45,9 @@ impl Replica {
         out_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
         key_expr: &str,
         name: &str,
-        log: Vec<(String, Timestamp)>,
     ) -> ZResult<Sender<crate::StorageMessage>> {
         info!("[REPLICA]Opening session...");
+        let startup_entries = storage.get_all_entries().await?;
 
         let replica = Replica {
             name: name.to_string(),
@@ -65,7 +65,7 @@ impl Replica {
         let (tx_log, rx_log) = flume::unbounded();
         let config = replica.replica_config.clone();
         // snapshotter
-        let snapshotter = Arc::new(Snapshotter::new(rx_log, log, config.clone()).await);
+        let snapshotter = Arc::new(Snapshotter::new(rx_log, startup_entries, config.clone()).await);
         // digest sub
         let digest_sub = replica.start_digest_sub(tx_digest);
         // eval for align
@@ -91,6 +91,10 @@ impl Replica {
         let snapshot_task = snapshotter.start();
 
         //actual storage
+        let replication = ReplicationService {
+            aligner_updates: rx_sample,
+            log_propagation: tx_log,
+        };
         let storage_task = StorageService::start(
             replica.session.clone(),
             &replica.key_expr,
@@ -98,8 +102,7 @@ impl Replica {
             storage,
             in_interceptor,
             out_interceptor,
-            Some(rx_sample),
-            Some(tx_log),
+            Some(replication),
         );
 
         let result = join!(

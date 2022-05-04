@@ -52,7 +52,6 @@ pub(crate) async fn start_storage(
     debug!("Start storage {} on {}", name, key_expr);
 
     if config.is_some() {
-        let startup_entries = storage.get_all_entries().await?;
         Replica::start(
             config.unwrap(),
             zenoh.clone(),
@@ -61,7 +60,6 @@ pub(crate) async fn start_storage(
             out_interceptor,
             &key_expr,
             &name,
-            startup_entries,
         )
         .await
     } else {
@@ -72,7 +70,6 @@ pub(crate) async fn start_storage(
             storage,
             in_interceptor,
             out_interceptor,
-            None,
             None,
         )
         .await
