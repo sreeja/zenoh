@@ -11,6 +11,7 @@
 // Contributors:
 //   ZettaScale Zenoh Team, <zenoh@zettascale.tech>
 //
+use super::{AlignEval, Aligner, Digest, Snapshotter, StorageService};
 use async_std::sync::Arc;
 use async_std::sync::RwLock;
 use async_std::task::sleep;
@@ -26,18 +27,17 @@ use zenoh::time::Timestamp;
 use zenoh::Session;
 use zenoh_backend_traits::config::ReplicaConfig;
 use zenoh_core::Result as ZResult;
-use super::{Digest, Aligner, AlignEval, StorageService, Snapshotter};
 
 pub struct Replica {
     name: String, // name of replica  -- UUID(zenoh)-<storage_name>((-<storage_type>??))
     session: Arc<Session>, // zenoh session used by the replica
-    key_expr: String,      // key expression of the storage to be functioning as a replica
+    key_expr: String, // key expression of the storage to be functioning as a replica
     replica_config: ReplicaConfig, // replica configuration - if some, replica, if none, normal storage
     digests_published: RwLock<HashSet<u64>>, // checksum of all digests generated and published by this replica
 }
 
 impl Replica {
-    pub async fn initialize_replica(
+    pub async fn start(
         config: ReplicaConfig,
         session: Arc<Session>,
         storage: Box<dyn zenoh_backend_traits::Storage>,
@@ -54,7 +54,7 @@ impl Replica {
             session,
             key_expr: key_expr.to_string(),
             replica_config: config,
-            digests_published: RwLock::new(HashSet::new())
+            digests_published: RwLock::new(HashSet::new()),
         };
 
         // channel to queue digests to be aligned
@@ -74,16 +74,16 @@ impl Replica {
             replica.session.clone(),
             &digest_key,
             &replica.name,
-            snapshotter.clone()
-        ); 
+            snapshotter.clone(),
+        );
         // aligner
         let aligner = Aligner::start_aligner(
             replica.session.clone(),
             &digest_key,
             rx_digest,
             tx_sample,
-            snapshotter.clone()
-        ); 
+            snapshotter.clone(),
+        );
         // digest pub
         let digest_pub = replica.start_digest_pub(snapshotter.clone());
 
@@ -91,7 +91,16 @@ impl Replica {
         let snapshot_task = snapshotter.start();
 
         //actual storage
-        let storage_task = StorageService::start(replica.session.clone(), &replica.key_expr, &replica.name, storage, in_interceptor, out_interceptor, Some(rx_sample), Some(tx_log));
+        let storage_task = StorageService::start(
+            replica.session.clone(),
+            &replica.key_expr,
+            &replica.name,
+            storage,
+            in_interceptor,
+            out_interceptor,
+            Some(rx_sample),
+            Some(tx_log),
+        );
 
         let result = join!(
             digest_sub,
@@ -108,7 +117,13 @@ impl Replica {
     pub async fn start_digest_sub(&self, tx: Sender<(String, Digest)>) {
         let mut received = HashMap::<String, Timestamp>::new();
 
-        let digest_key = format!("{}**", Replica::get_digest_key(self.key_expr.to_string(), self.replica_config.align_prefix.to_string()));
+        let digest_key = format!(
+            "{}**",
+            Replica::get_digest_key(
+                self.key_expr.to_string(),
+                self.replica_config.align_prefix.to_string()
+            )
+        );
 
         debug!(
             "[DIGEST_SUB]Creating Subscriber named {} on '{}'...",
@@ -119,7 +134,11 @@ impl Replica {
         loop {
             let sample = subscriber.receiver().next().await;
             let sample = sample.unwrap();
-            let from = &sample.key_expr.as_str()[Replica::get_digest_key(self.key_expr.to_string(), self.replica_config.align_prefix.to_string()).len()..];
+            let from = &sample.key_expr.as_str()[Replica::get_digest_key(
+                self.key_expr.to_string(),
+                self.replica_config.align_prefix.to_string(),
+            )
+            .len()..];
             debug!(
                 "[DIGEST_SUB]>> [Digest Subscriber] From {} Received {} ('{}': '{}')",
                 from,
@@ -127,8 +146,7 @@ impl Replica {
                 sample.key_expr.as_str(),
                 sample.value
             );
-            let digest: Digest =
-                serde_json::from_str(&format!("{}", sample.value)).unwrap();
+            let digest: Digest = serde_json::from_str(&format!("{}", sample.value)).unwrap();
             let ts = digest.timestamp;
             let to_be_processed = self
                 .processing_needed(from, digest.timestamp, digest.checksum, received.clone())
@@ -142,7 +160,14 @@ impl Replica {
     }
 
     pub async fn start_digest_pub(&self, snapshotter: Arc<Snapshotter>) {
-        let digest_key = format!("{}{}", Replica::get_digest_key(self.key_expr.to_string(), self.replica_config.align_prefix.to_string()), self.name);
+        let digest_key = format!(
+            "{}{}",
+            Replica::get_digest_key(
+                self.key_expr.to_string(),
+                self.replica_config.align_prefix.to_string()
+            ),
+            self.name
+        );
 
         debug!(
             "[DIGEST_PUB]Declaring digest on key expression '{}'...",
@@ -195,9 +220,8 @@ impl Replica {
             return false;
         }
 
-        return true;
+        true
     }
-
 
     fn get_digest_key(key_expr: String, align_prefix: String) -> String {
         if key_expr.ends_with("**") {

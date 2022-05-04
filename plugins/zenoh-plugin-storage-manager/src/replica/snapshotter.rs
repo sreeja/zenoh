@@ -11,6 +11,7 @@
 // Contributors:
 //   ZettaScale Zenoh Team, <zenoh@zettascale.tech>
 //
+use super::{Digest, DigestConfig};
 use async_std::sync::Arc;
 use async_std::sync::RwLock;
 use async_std::task::sleep;
@@ -22,34 +23,40 @@ use std::convert::TryFrom;
 use std::time::Duration;
 use zenoh::time::Timestamp;
 use zenoh_backend_traits::config::ReplicaConfig;
-use super::{Digest, DigestConfig};
 
 pub struct ReplicationInfo {
     stable_log: Arc<RwLock<HashMap<String, Timestamp>>>, // log entries until the snapshot time
-    volatile_log: RwLock<HashMap<String, Timestamp>>, // log entries after the snapshot time
-    last_snapshot_time: RwLock<Timestamp>,   // the latest snapshot time
-    last_interval: RwLock<u64>,              // the latest interval
-    digest: Arc<RwLock<Digest>>,          // the current stable digest
+    volatile_log: RwLock<HashMap<String, Timestamp>>,    // log entries after the snapshot time
+    last_snapshot_time: RwLock<Timestamp>,               // the latest snapshot time
+    last_interval: RwLock<u64>,                          // the latest interval
+    digest: Arc<RwLock<Digest>>,                         // the current stable digest
 }
 
 pub struct Snapshotter {
     storage_update: Receiver<(String, Timestamp)>,
     replica_config: ReplicaConfig,
-    content: ReplicationInfo
+    content: ReplicationInfo,
 }
 
 impl Snapshotter {
     // this class takes care of managing logs, digests and keeps snapshot time and interval updated
-    // two roles: 
+    // two roles:
     // 1. receives logs from storage, updates the log
     // 2. when asked by snapshot_timer, update the stable and volatile part of logs  -- , rx_snapshot: Receiver<(Timestamp, u64)>
     // a queue each to listen to storage and snapshotter
 
-    pub async fn new(rx_sample: Receiver<(String, Timestamp)>, initial_entries: Vec<(String, Timestamp)>, replica_config: ReplicaConfig) -> Self {
+    pub async fn new(
+        rx_sample: Receiver<(String, Timestamp)>,
+        initial_entries: Vec<(String, Timestamp)>,
+        replica_config: ReplicaConfig,
+    ) -> Self {
         // compute snapshot time and snapshot interval to start with
-        // from initial entries, populate the log - stable and volatile 
+        // from initial entries, populate the log - stable and volatile
         // compute digest
-        let (last_snapshot_time, last_interval) = Snapshotter::compute_snapshot_params(replica_config.propagation_delay, replica_config.delta);
+        let (last_snapshot_time, last_interval) = Snapshotter::compute_snapshot_params(
+            replica_config.propagation_delay,
+            replica_config.delta,
+        );
         let snapshotter = Snapshotter {
             storage_update: rx_sample,
             replica_config: replica_config.clone(),
@@ -58,13 +65,19 @@ impl Snapshotter {
                 volatile_log: RwLock::new(HashMap::new()),
                 last_snapshot_time: RwLock::new(last_snapshot_time),
                 last_interval: RwLock::new(last_interval),
-                digest: Arc::new(RwLock::new(Digest::create_digest(last_snapshot_time, DigestConfig {
-                    delta: replica_config.delta,
-                    sub_intervals: replica_config.subintervals,
-                    hot: replica_config.hot,
-                    warm: replica_config.warm
-                }, Vec::new(), last_interval, last_snapshot_time)))
-            }
+                digest: Arc::new(RwLock::new(Digest::create_digest(
+                    last_snapshot_time,
+                    DigestConfig {
+                        delta: replica_config.delta,
+                        sub_intervals: replica_config.subintervals,
+                        hot: replica_config.hot,
+                        warm: replica_config.warm,
+                    },
+                    Vec::new(),
+                    last_interval,
+                    last_snapshot_time,
+                ))),
+            },
         };
         snapshotter.initialize_log(initial_entries).await;
         snapshotter.initialize_digest().await;
@@ -104,7 +117,10 @@ impl Snapshotter {
         }
     }
 
-    pub fn compute_snapshot_params(propagation_delay: Duration, delta: Duration) -> (Timestamp, u64) {
+    pub fn compute_snapshot_params(
+        propagation_delay: Duration,
+        delta: Duration,
+    ) -> (Timestamp, u64) {
         let now = zenoh::time::new_reception_timestamp();
         let latest_interval = (now
             .get_time()
@@ -143,14 +159,12 @@ impl Snapshotter {
                 } else {
                     (*volatile_log).insert(k, ts);
                 }
-            } else {
-                if stable_log.contains_key(&k) {
-                    if *stable_log.get(&k).unwrap() < ts {
-                        (*stable_log).insert(k, ts);
-                    }
-                } else {
+            } else if stable_log.contains_key(&k) {
+                if *stable_log.get(&k).unwrap() < ts {
                     (*stable_log).insert(k, ts);
                 }
+            } else {
+                (*stable_log).insert(k, ts);
             }
         }
         drop(volatile_log);
@@ -280,5 +294,4 @@ impl Snapshotter {
     pub async fn get_digest(&self) -> Digest {
         self.content.digest.read().await.clone()
     }
-
 }
