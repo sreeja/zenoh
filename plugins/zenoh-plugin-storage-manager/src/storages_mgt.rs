@@ -12,7 +12,7 @@
 //   ZettaScale Zenoh Team, <zenoh@zettascale.tech>
 //
 use async_std::sync::Arc;
-use log::debug; 
+use log::debug;
 use zenoh::prelude::*;
 use zenoh::Session;
 use zenoh_backend_traits::config::ReplicaConfig;

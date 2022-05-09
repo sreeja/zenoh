@@ -50,7 +50,7 @@ impl StorageService {
         storage: Box<dyn zenoh_backend_traits::Storage>,
         in_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
         out_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
-        replication: Option<ReplicationService>, 
+        replication: Option<ReplicationService>,
     ) -> ZResult<Sender<StorageMessage>> {
         let storage_service = StorageService {
             session,

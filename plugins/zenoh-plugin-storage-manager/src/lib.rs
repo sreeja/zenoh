@@ -13,8 +13,8 @@
 //
 #![recursion_limit = "512"]
 
-use flume::Sender;
 use async_std::task;
+use flume::Sender;
 use libloading::Library;
 use memory_backend::create_memory_backend;
 use std::collections::HashMap;
