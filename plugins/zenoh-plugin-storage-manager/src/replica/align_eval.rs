@@ -11,7 +11,6 @@
 // Contributors:
 //   ZettaScale Zenoh Team, <zenoh@zettascale.tech>
 //
-
 use super::digest::*;
 use super::Snapshotter;
 use async_std::sync::Arc;
@@ -26,14 +25,6 @@ use zenoh::prelude::*;
 use zenoh::queryable::EVAL;
 use zenoh::time::Timestamp;
 use zenoh::Session;
-// #[path = "digest.rs"]
-// mod digest;
-// use digest::*;
-
-// const ERA: &str = "era";
-// const INTERVALS: &str = "intervals";
-// const SUBINTERVALS: &str = "subintervals";
-// const CONTENTS: &str = "contents";
 
 pub struct AlignEval {
     session: Arc<Session>,
@@ -185,13 +176,9 @@ impl AlignEval {
     async fn get_entry_with_ts(&self, timestamp: Timestamp) -> Option<Sample> {
         // get corresponding key from log
         let mut key = None;
-        // let replica_data = self.replica_data.as_ref().unwrap();
         let log = self.snapshotter.get_stable_log().await;
-        // debug!("**************** log is {:?}", *log);
         for (k, ts) in log {
-            // debug!("************** searching for {} in log", timestamp);
             if ts == timestamp {
-                // debug!("**************** got corresponding key {} ", k);
                 key = Some(k.to_string());
             }
         }
@@ -222,13 +209,11 @@ impl AlignEval {
     }
 
     async fn get_intervals(&self, era: EraType) -> HashMap<u64, u64> {
-        // let replica_data = self.replica_data.as_ref().unwrap();
         let digest = self.snapshotter.get_digest().await;
         digest.get_era_content(era)
     }
 
     async fn get_subintervals(&self, interval: u64) -> HashMap<u64, u64> {
-        // let replica_data = self.replica_data.as_ref().unwrap();
         let digest = self.snapshotter.get_digest().await;
         let mut intervals = HashSet::new();
         intervals.insert(interval);
@@ -236,7 +221,6 @@ impl AlignEval {
     }
 
     async fn get_content(&self, subinterval: u64) -> HashMap<u64, Vec<zenoh::time::Timestamp>> {
-        // let replica_data = self.replica_data.as_ref().unwrap();
         let digest = self.snapshotter.get_digest().await;
         let mut subintervals = HashSet::new();
         subintervals.insert(subinterval);

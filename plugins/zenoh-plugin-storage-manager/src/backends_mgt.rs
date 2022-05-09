@@ -13,7 +13,6 @@
 //
 use super::storages_mgt::*;
 use flume::Sender;
-// use async_std::sync::Arc;
 use log::trace;
 use std::sync::Arc;
 use zenoh::prelude::*;
