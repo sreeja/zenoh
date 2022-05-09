@@ -11,19 +11,10 @@
 // Contributors:
 //   ZettaScale Zenoh Team, <zenoh@zettascale.tech>
 //
-// use async_std::channel::{bounded, Sender};
 use async_std::sync::Arc;
-// use async_std::task;
-// use futures::select;
-// use futures::stream::StreamExt;
-// use futures::FutureExt;
-// use futures::join;
-use log::debug; // }, error, trace, warn};
+use log::debug; 
 use zenoh::prelude::*;
-// use zenoh::query::{QueryConsolidation, QueryTarget, Target};
-// use zenoh::queryable;
 use zenoh::Session;
-// use zenoh_backend_traits::Query;
 use zenoh_backend_traits::config::ReplicaConfig;
 use zenoh_core::Result as ZResult;
 

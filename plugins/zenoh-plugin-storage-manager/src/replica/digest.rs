@@ -21,15 +21,6 @@ use std::str::FromStr;
 use std::string::ParseError;
 use std::time::Duration;
 use zenoh::time::Timestamp;
-// use std::error::Error;
-// use std::fmt;
-
-// define DELTA, EPOCH_START, etc
-// pub const PROPAGATION_DELAY: Duration = Duration::from_millis(200);
-// pub const DELTA: Duration = Duration::from_millis(1000);
-// const SUB_INTERVALS: usize = 10;
-// const HOT: usize = 5;
-// const WARM: usize = 10;
 
 #[derive(Eq, PartialEq, Clone, Debug, Deserialize, Serialize)]
 pub struct DigestConfig {
@@ -38,14 +29,6 @@ pub struct DigestConfig {
     pub hot: usize,
     pub warm: usize,
 }
-
-// #[derive(PartialEq, Eq, Debug, Clone)]
-// pub struct Log {
-//     pub era: EraType,
-//     pub interval: u64,
-//     pub subinterval: u64,
-//     pub content: zenoh::time::Timestamp,
-// }
 
 // TODO: split this such that only minimal information is sent through wire. Maybe a new CompressedDigest struct would also work
 #[derive(Eq, PartialEq, Clone, Debug, Deserialize, Serialize)]
@@ -567,19 +550,6 @@ impl Digest {
         let delta = u64::try_from(delta.as_millis()).unwrap();
         ts / (delta / u64::try_from(subintervals).unwrap())
     }
-
-    // fn get_interval(delta:Duration, ts:Timestamp) -> u64 {
-    //     let ts = u64::try_from(
-    //         ts.get_time()
-    //             .to_system_time()
-    //             .duration_since(super::EPOCH_START)
-    //             .unwrap()
-    //             .as_millis(),
-    //     )
-    //     .unwrap();
-    //     let delta = u64::try_from(delta.as_millis()).unwrap();
-    //     ts / delta
-    // }
 
     fn get_interval(subinterval: u64, subintervals: usize) -> u64 {
         let subintervals = u64::try_from(subintervals).unwrap();

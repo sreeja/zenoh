@@ -11,7 +11,6 @@
 // Contributors:
 //   ZettaScale Zenoh Team, <zenoh@zettascale.tech>
 //
-
 use async_std::sync::Arc;
 use async_std::sync::RwLock;
 use async_std::task::sleep;
