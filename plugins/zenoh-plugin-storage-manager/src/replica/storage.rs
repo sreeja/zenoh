@@ -16,16 +16,15 @@ use async_std::sync::Arc;
 use async_std::sync::Mutex;
 use flume::{Receiver, Sender};
 use futures::select;
-use futures::stream::StreamExt;
 use log::{debug, error, trace, warn};
 use std::str;
 use zenoh::prelude::Sample;
 use zenoh::prelude::*;
-use zenoh::queryable;
 use zenoh::time::Timestamp;
 use zenoh::Session;
 use zenoh_backend_traits::{Query, StorageInsertionResult};
 use zenoh_core::Result as ZResult;
+use zenoh_core::AsyncResolve;
 
 pub struct ReplicationService {
     pub aligner_updates: Receiver<Sample>,
@@ -70,7 +69,7 @@ impl StorageService {
         // TODO:do we need a task here? if yes, why?
         // task::spawn(async move {
         // subscribe on key_expr
-        let mut storage_sub = match self.session.subscribe(&self.key_expr).await {
+        let storage_sub = match self.session.subscribe(&self.key_expr).res_async().await {
             Ok(storage_sub) => storage_sub,
             Err(e) => {
                 error!("Error starting storage {} : {}", self.name, e);
@@ -79,11 +78,7 @@ impl StorageService {
         };
 
         // answer to queries on key_expr
-        let mut storage_queryable = match self
-            .session
-            .queryable(&self.key_expr)
-            .kind(queryable::STORAGE)
-            .await
+        let storage_queryable = match self.session.queryable(&self.key_expr).res().await
         {
             Ok(storage_queryable) => storage_queryable,
             Err(e) => {
@@ -98,11 +93,11 @@ impl StorageService {
             loop {
                 select!(
                     // on sample for key_expr
-                    sample = storage_sub.next() => {
+                    sample = storage_sub.recv_async() => {
                         self.process_sample(sample.unwrap()).await;
                     },
                     // on query on key_expr
-                    query = storage_queryable.next() => {
+                    query = storage_queryable.recv_async() => {
                         let q = query.unwrap();
                         // wrap zenoh::Query in zenoh_backend_traits::Query
                         // with outgoing interceptor
@@ -148,11 +143,11 @@ impl StorageService {
             loop {
                 select!(
                     // on sample for key_expr
-                    sample = storage_sub.next() => {
+                    sample = storage_sub.recv_async() => {
                         self.process_sample(sample.unwrap()).await;
                     },
                     // on query on key_expr
-                    query = storage_queryable.next() => {
+                    query = storage_queryable.recv_async() => {
                         let q = query.unwrap();
                         // wrap zenoh::Query in zenoh_backend_traits::Query
                         // with outgoing interceptor

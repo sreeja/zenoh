@@ -14,7 +14,6 @@
 use super::digest::*;
 use super::Snapshotter;
 use async_std::sync::Arc;
-use futures::stream::StreamExt;
 use log::{debug, error};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
@@ -22,9 +21,10 @@ use std::str;
 use std::str::FromStr;
 use zenoh::prelude::Sample;
 use zenoh::prelude::*;
-use zenoh::queryable::EVAL;
 use zenoh::time::Timestamp;
 use zenoh::Session;
+use zenoh::query::QueryTarget;
+use zenoh_core::AsyncResolve;
 
 pub struct AlignEval {
     session: Arc<Session>,
@@ -60,15 +60,15 @@ impl AlignEval {
 
     async fn start(&self) -> Self {
         debug!("[ALIGN_EVAL] Creating Eval on '{}'...", self.digest_key);
-        let mut queryable = self
+        let queryable = self
             .session
             .queryable(&self.digest_key)
-            .kind(EVAL)
+            .res()
             .await
             .unwrap();
 
         loop {
-            let query = queryable.receiver().next().await;
+            let query = queryable.recv_async().await;
             let query = query.unwrap();
             debug!(
                 "[ALIGN_EVAL]>> [Queryable ] Received Query '{}'",
@@ -86,10 +86,10 @@ impl AlignEval {
                 None => String::from(""),
             };
             debug!("[ALIGN_EVAL] value for the query is {}", value);
-            query.reply(Sample::new(
+            query.reply(Ok(Sample::new(
                 selector.key_selector.as_str().to_string(),
                 value,
-            ));
+            ))).res().await.unwrap();
         }
     }
 
@@ -122,7 +122,7 @@ impl AlignEval {
                         let entry = entry.unwrap();
                         result.insert(
                             entry.key_expr.as_str().to_string(),
-                            (entry.value.as_json().unwrap(), entry.timestamp),
+                            (entry.value.to_string(), entry.timestamp),
                         );
                     }
                 }
@@ -184,24 +184,29 @@ impl AlignEval {
         }
 
         if key.is_some() {
-            let mut replies = self.session.get(&key.unwrap()).await.unwrap();
-            if let Some(reply) = replies.next().await {
-                debug!(
-                    "[ALIGN QUERYABLE]>> Received ('{}': '{}')",
-                    reply.sample.key_expr.as_str(),
-                    reply.sample.value
-                );
-                if reply.sample.timestamp.is_some() {
-                    match reply.sample.timestamp.unwrap().cmp(&timestamp) {
-                        Ordering::Greater => return None,
-                        Ordering::Less => {
-                            error!(
-                                "[ALIGN QUERYABLE] Data in the storage is older than requested."
-                            );
-                            return None;
+            let replies = self.session.get(&key.unwrap()).target(QueryTarget::All).res().await.unwrap();
+            if let Ok(reply) = replies.recv_async().await {
+                match reply.sample {
+                    Ok(sample) => {
+                        debug!(
+                            "[ALIGN QUERYABLE]>> Received ('{}': '{}')",
+                            sample.key_expr.as_str(),
+                            sample.value
+                        );
+                        if sample.timestamp.is_some() {
+                            match sample.timestamp.unwrap().cmp(&timestamp) {
+                                Ordering::Greater => return None,
+                                Ordering::Less => {
+                                    error!(
+                                        "[ALIGN QUERYABLE] Data in the storage is older than requested."
+                                    );
+                                    return None;
+                                }
+                                Ordering::Equal => return Some(sample),
+                            }
                         }
-                        Ordering::Equal => return Some(reply.sample),
-                    }
+                    },
+                    Err(e) => println!(">> Received (ERROR: '{}')", e),
                 }
             }
         }

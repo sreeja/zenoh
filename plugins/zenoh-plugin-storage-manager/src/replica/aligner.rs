@@ -16,7 +16,6 @@ use super::Snapshotter;
 use async_std::sync::Arc;
 use async_std::sync::RwLock;
 use flume::{Receiver, Sender};
-use futures::stream::StreamExt;
 use log::debug;
 use std::collections::{HashMap, HashSet};
 use std::str;
@@ -24,6 +23,7 @@ use zenoh::prelude::Sample;
 use zenoh::prelude::{KeyExpr, Value};
 use zenoh::time::Timestamp;
 use zenoh::Session;
+use zenoh_core::AsyncResolve;
 
 pub struct Aligner {
     session: Arc<Session>,
@@ -257,14 +257,19 @@ impl Aligner {
     async fn perform_query(&self, from: String, properties: String) -> Option<String> {
         let selector = format!("{}{}?({})", self.digest_key, from, properties);
         debug!("[ALIGNER]Sending Query '{}'...", selector);
-        let mut replies = self.session.get(&selector).await.unwrap();
-        if let Some(reply) = replies.next().await {
-            debug!(
-                "[ALIGNER]>> Received ('{}': '{}')",
-                reply.sample.key_expr.as_str(),
-                reply.sample.value
-            );
-            return Some(format!("{:?}", reply.sample.value));
+        let replies = self.session.get(&selector).res().await.unwrap();
+        if let Ok(reply) = replies.recv_async().await {
+            match reply.sample {
+                Ok(sample) => {
+                    debug!(
+                        "[ALIGNER]>> Received ('{}': '{}')",
+                        sample.key_expr.as_str(),
+                        sample.value
+                    );
+                    return Some(format!("{:?}", sample.value));
+                },
+                Err(e) => println!("Error on receiving sample: {}", e),
+            }
         }
         None
     }

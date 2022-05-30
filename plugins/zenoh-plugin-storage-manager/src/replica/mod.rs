@@ -16,7 +16,6 @@ use async_std::sync::RwLock;
 use async_std::task::sleep;
 use flume::Sender;
 use futures::join;
-use futures::stream::StreamExt;
 use log::{debug, info};
 use std::collections::{HashMap, HashSet};
 use std::str;
@@ -27,6 +26,7 @@ use zenoh::time::Timestamp;
 use zenoh::Session;
 use zenoh_backend_traits::config::ReplicaConfig;
 use zenoh_core::Result as ZResult;
+use zenoh_core::AsyncResolve;
 
 pub mod align_eval;
 pub mod aligner;
@@ -150,10 +150,10 @@ impl Replica {
             "[DIGEST_SUB]Creating Subscriber named {} on '{}'...",
             self.name, digest_key
         );
-        let mut subscriber = self.session.subscribe(&digest_key).await.unwrap();
+        let subscriber = self.session.subscribe(&self.key_expr).res_async().await.unwrap();
 
         loop {
-            let sample = subscriber.receiver().next().await;
+            let sample = subscriber.recv_async().await;
             let sample = sample.unwrap();
             let from = &sample.key_expr.as_str()[Replica::get_digest_key(
                 self.key_expr.to_string(),
@@ -194,11 +194,11 @@ impl Replica {
             "[DIGEST_PUB]Declaring digest on key expression '{}'...",
             digest_key
         );
-        let expr_id = self.session.declare_expr(&digest_key).await.unwrap();
+        let expr_id = self.session.declare_expr(&digest_key).res().await.unwrap();
         debug!("[DIGEST_PUB] => ExprId {}", expr_id);
 
         debug!("[DIGEST_PUB]Declaring publication on '{}'...", expr_id);
-        self.session.declare_publication(expr_id).await.unwrap();
+        self.session.declare_publication(expr_id).res().await.unwrap();
 
         loop {
             sleep(self.replica_config.publication_interval).await;
@@ -215,7 +215,7 @@ impl Replica {
                 "[DIGEST_PUB]Putting Digest ('{}': '{}')...",
                 expr_id, digest_json
             );
-            self.session.put(expr_id, digest_json).await.unwrap();
+            self.session.put(expr_id, digest_json).res().await.unwrap();
         }
     }
 
