@@ -23,8 +23,8 @@ use zenoh::prelude::*;
 use zenoh::time::Timestamp;
 use zenoh::Session;
 use zenoh_backend_traits::{Query, StorageInsertionResult};
-use zenoh_core::Result as ZResult;
 use zenoh_core::AsyncResolve;
+use zenoh_core::Result as ZResult;
 
 pub struct ReplicationService {
     pub aligner_updates: Receiver<Sample>,
@@ -78,8 +78,7 @@ impl StorageService {
         };
 
         // answer to queries on key_expr
-        let storage_queryable = match self.session.queryable(&self.key_expr).res().await
-        {
+        let storage_queryable = match self.session.queryable(&self.key_expr).res().await {
             Ok(storage_queryable) => storage_queryable,
             Err(e) => {
                 error!("Error starting storage {} : {}", self.name, e);

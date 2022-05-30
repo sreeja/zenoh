@@ -267,7 +267,7 @@ impl Aligner {
                         sample.value
                     );
                     return Some(format!("{:?}", sample.value));
-                },
+                }
                 Err(e) => println!("Error on receiving sample: {}", e),
             }
         }

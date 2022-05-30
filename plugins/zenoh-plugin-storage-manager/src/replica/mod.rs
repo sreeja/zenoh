@@ -25,8 +25,8 @@ use zenoh::prelude::*;
 use zenoh::time::Timestamp;
 use zenoh::Session;
 use zenoh_backend_traits::config::ReplicaConfig;
-use zenoh_core::Result as ZResult;
 use zenoh_core::AsyncResolve;
+use zenoh_core::Result as ZResult;
 
 pub mod align_eval;
 pub mod aligner;
@@ -150,7 +150,12 @@ impl Replica {
             "[DIGEST_SUB]Creating Subscriber named {} on '{}'...",
             self.name, digest_key
         );
-        let subscriber = self.session.subscribe(&self.key_expr).res_async().await.unwrap();
+        let subscriber = self
+            .session
+            .subscribe(&self.key_expr)
+            .res_async()
+            .await
+            .unwrap();
 
         loop {
             let sample = subscriber.recv_async().await;
@@ -198,7 +203,11 @@ impl Replica {
         debug!("[DIGEST_PUB] => ExprId {}", expr_id);
 
         debug!("[DIGEST_PUB]Declaring publication on '{}'...", expr_id);
-        self.session.declare_publication(expr_id).res().await.unwrap();
+        self.session
+            .declare_publication(expr_id)
+            .res()
+            .await
+            .unwrap();
 
         loop {
             sleep(self.replica_config.publication_interval).await;

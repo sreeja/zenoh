@@ -21,9 +21,9 @@ use std::str;
 use std::str::FromStr;
 use zenoh::prelude::Sample;
 use zenoh::prelude::*;
+use zenoh::query::QueryTarget;
 use zenoh::time::Timestamp;
 use zenoh::Session;
-use zenoh::query::QueryTarget;
 use zenoh_core::AsyncResolve;
 
 pub struct AlignEval {
@@ -86,10 +86,14 @@ impl AlignEval {
                 None => String::from(""),
             };
             debug!("[ALIGN_EVAL] value for the query is {}", value);
-            query.reply(Ok(Sample::new(
-                selector.key_selector.as_str().to_string(),
-                value,
-            ))).res().await.unwrap();
+            query
+                .reply(Ok(Sample::new(
+                    selector.key_selector.as_str().to_string(),
+                    value,
+                )))
+                .res()
+                .await
+                .unwrap();
         }
     }
 
@@ -184,7 +188,13 @@ impl AlignEval {
         }
 
         if key.is_some() {
-            let replies = self.session.get(&key.unwrap()).target(QueryTarget::All).res().await.unwrap();
+            let replies = self
+                .session
+                .get(&key.unwrap())
+                .target(QueryTarget::All)
+                .res()
+                .await
+                .unwrap();
             if let Ok(reply) = replies.recv_async().await {
                 match reply.sample {
                     Ok(sample) => {
@@ -205,7 +215,7 @@ impl AlignEval {
                                 Ordering::Equal => return Some(sample),
                             }
                         }
-                    },
+                    }
                     Err(e) => println!(">> Received (ERROR: '{}')", e),
                 }
             }
