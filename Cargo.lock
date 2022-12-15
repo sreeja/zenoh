@@ -89,6 +89,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ahash"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fcb51a0695d8f838b1ee009b3fbf66bda078cd64590202a864a8f3e8c4315c47"
+dependencies = [
+ "getrandom 0.2.8",
+ "once_cell",
+ "version_check",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "0.7.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1274,6 +1285,9 @@ name = "hashbrown"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
+dependencies = [
+ "ahash",
+]
 
 [[package]]
 name = "hermit-abi"
@@ -1545,6 +1559,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3afef3b6eff9ce9d8ff9b3601125eec7f0c8cbac7abd14f355d053fa56c98768"
 dependencies = [
  "cpufeatures",
+]
+
+[[package]]
+name = "keyed-set"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "853c9e24b136ce2dbaee88ee80af8f704c5a78ea09831f76dddeb60b941bb868"
+dependencies = [
+ "hashbrown",
 ]
 
 [[package]]
@@ -3788,9 +3811,13 @@ version = "0.7.0-rc"
 dependencies = [
  "async-std",
  "async-trait",
+ "criterion",
  "flume",
+ "keyed-set",
  "log",
+ "rand 0.8.5",
  "zenoh-core",
+ "zenoh-protocol-core",
  "zenoh-sync",
 ]
 
