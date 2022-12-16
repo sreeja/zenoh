@@ -26,6 +26,8 @@ use zenoh::time::Timestamp;
 use zenoh::Session;
 // use zenoh_backend_traits::{Capability, Persistence, StorageInsertionResult};
 use zenoh_backend_traits::StorageInsertionResult;
+use zenoh_collections::keyexpr_tree::{KeyExprTree, IKeyExprTreeExt};
+use zenoh_collections::keyexpr_tree::keyed_set_tree::KeyedSetProvider;
 
 pub struct ReplicationService {
     pub empty_start: bool,
@@ -40,8 +42,8 @@ pub struct StorageService {
     name: String,
     storage: Mutex<Box<dyn zenoh_backend_traits::Storage>>,
     // capability: Capability,
-    tombstones: RwLock<HashMap<OwnedKeyExpr, Timestamp>>,
-    wildcard_updates: RwLock<HashMap<OwnedKeyExpr, Sample>>,
+    tombstones: RwLock<KeyExprTree<Timestamp, KeyedSetProvider>>,
+    wildcard_updates: RwLock<KeyExprTree<Sample, KeyedSetProvider>>,
     // latest_timestamp_cache: Option<RwLock<HashMap<OwnedKeyExpr, Timestamp>>>,
     in_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
     out_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
@@ -69,8 +71,8 @@ impl StorageService {
             name: name.to_string(),
             storage: Mutex::new(store_intercept.storage),
             // capability: store_intercept.capability,
-            tombstones: RwLock::new(HashMap::new()),
-            wildcard_updates: RwLock::new(HashMap::new()),
+            tombstones: RwLock::new(KeyExprTree::<Timestamp, _>::new()),
+            wildcard_updates: RwLock::new(KeyExprTree::<Sample, _>::new()),
             // latest_timestamp_cache,
             in_interceptor: store_intercept.in_interceptor,
             out_interceptor: store_intercept.out_interceptor,
@@ -266,7 +268,7 @@ impl StorageService {
     async fn mark_tombstone(&self, key_expr: OwnedKeyExpr, timestamp: Timestamp) {
         // @TODO:change into a better store
         let mut tombstones = self.tombstones.write().await;
-        tombstones.insert(key_expr, timestamp);
+        tombstones.insert(&key_expr, timestamp);
         // @TODO: implement this
         // if self.capability.persistence.eq(&Persistence::Durable) {
         //     // flush to disk to makeit durable
@@ -278,7 +280,7 @@ impl StorageService {
     async fn register_wildcard_update(&self, sample: Sample) {
         // @TODO: change to a better store
         let mut wildcards = self.wildcard_updates.write().await;
-        wildcards.insert(sample.key_expr.clone().into(), sample);
+        wildcards.insert(&sample.key_expr.clone(), sample);
         // @TODO: implement this
         // if self.capability.persistence.eq(&Persistence::Durable) {
         //     // flush to disk to makeit durable
@@ -289,11 +291,12 @@ impl StorageService {
 
     async fn is_outdated(&self, key_expr: &OwnedKeyExpr, timestamp: &Timestamp) -> bool {
         let tombstones = self.tombstones.read().await;
-        if tombstones.contains_key(key_expr) && tombstones.get(key_expr).unwrap() > timestamp {
+        if tombstones.weight_at(key_expr).is_some() && tombstones.weight_at(key_expr).unwrap() > timestamp {
             // check wild card store
             let wildcards = self.wildcard_updates.read().await;
-            for (key, sample) in wildcards.iter() {
-                if key_expr.intersects(key) && sample.timestamp.unwrap() > *timestamp {
+            for key in wildcards.intersecting_keys(key_expr) {
+                let sample = wildcards.weight_at(&key).unwrap();
+                if sample.timestamp.unwrap() > *timestamp {
                     return true;
                 }
             }
