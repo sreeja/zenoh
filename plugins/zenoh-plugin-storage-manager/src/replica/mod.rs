@@ -36,6 +36,7 @@ pub mod aligner;
 pub mod digest;
 pub mod snapshotter;
 pub mod storage;
+pub mod logger;
 
 pub use align_queryable::AlignQueryable;
 pub use aligner::Aligner;

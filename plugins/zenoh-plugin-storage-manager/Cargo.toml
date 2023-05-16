@@ -37,6 +37,7 @@ async-trait = { workspace = true }
 clap = { workspace = true }
 crc = { workspace = true }
 derive-new = { workspace = true }
+emseries = "0.5.1"
 env_logger = { workspace = true }
 flume = { workspace = true }
 futures = { workspace = true }

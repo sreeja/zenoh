@@ -36,8 +36,11 @@ use zenoh_keyexpr::keyexpr_tree::{
 use zenoh_result::bail;
 use zenoh_util::{zenoh_home, Timed, TimedEvent, Timer};
 
+use super::logger::Logger;
+
 pub const WILDCARD_UPDATES_FILENAME: &str = "wildcard_updates";
 pub const TOMBSTONE_FILENAME: &str = "tombstones";
+pub const LOG_FILENAME: &str = "log_file";
 
 #[derive(Clone)]
 struct Update {
@@ -61,6 +64,7 @@ pub struct StorageService {
     capability: Capability,
     tombstones: Arc<RwLock<KeBoxTree<Timestamp, NonWild, KeyedSetProvider>>>,
     wildcard_updates: Arc<RwLock<KeBoxTree<Update, UnknownWildness, KeyedSetProvider>>>,
+    update_log: Arc<RwLock<Logger>>,
     in_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
     out_interceptor: Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>>,
     replication: Option<ReplicationService>,
@@ -86,6 +90,7 @@ impl StorageService {
             capability: store_intercept.capability,
             tombstones: Arc::new(RwLock::new(KeBoxTree::new())),
             wildcard_updates: Arc::new(RwLock::new(KeBoxTree::new())),
+            update_log: Arc::new(RwLock::new(Logger::new(LOG_FILENAME).await)),
             in_interceptor: store_intercept.in_interceptor,
             out_interceptor: store_intercept.out_interceptor,
             replication,
@@ -270,6 +275,14 @@ impl StorageService {
         } else {
             sample
         };
+
+        // log update
+        let logger = self.update_log.write().await;
+        if let Err(e) = logger.save(sample.clone(), None).await { //@TODO: fix snapshot
+            log::error!("Error in logging update: {}", e);
+            return;
+        }
+        drop(logger);
 
         // if wildcard, update wildcard_updates
         if sample.key_expr.is_wild() {
